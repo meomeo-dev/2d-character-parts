@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "name": "2D Character Parts — Grid Catalog Layout",
+    "canvas_width": 800,
+    "canvas_height": 800,
+    "version": "1.3"
+  },
+  "global_ref_slot": { "x": 540, "y": 220, "w": 210, "h": 140, "label": "Global Reference 全局参考 (9:16)" },
+  "pipeline": [
+    { "stage": 0, "name": "global_ref",  "label": "全局参考",
+      "parts": ["global_reference"],
+      "depends_on": [],
+      "context": "建立整体角色风格、配色、比例基准。后续所有部件以此为准。" },
+    { "stage": 1, "name": "torso",       "label": "躯干 (锚定核心比例)",
+      "parts": ["torso"],
+      "depends_on": ["global_ref"],
+      "context": "躯干决定肩宽和髋宽，是四肢和头部的比例锚点。参考全局图的配色和服饰风格。" },
+    { "stage": 2, "name": "lower_limbs", "label": "下肢 (自下而上 L→R)",
+      "parts": ["thigh_L", "thigh_R", "calf_L", "calf_R", "foot_L", "foot_R"],
+      "depends_on": ["torso"],
+      "context": "大腿粗细需对齐躯干髋宽；小腿衔接大腿；脚部对齐小腿。同级内左侧优先保证对称。" },
+    { "stage": 3, "name": "upper_limbs", "label": "上肢 (L→R)",
+      "parts": ["upper_arm_L", "upper_arm_R", "forearm_L", "forearm_R", "hand_L", "hand_R"],
+      "depends_on": ["torso"],
+      "context": "上臂需对齐躯干肩宽；前臂衔接上臂；手部衔接前臂。同级内左侧优先保证对称。" },
+    { "stage": 4, "name": "head",        "label": "头部",
+      "parts": ["head"],
+      "depends_on": ["torso"],
+      "context": "头部大小需与躯干比例协调 (约1:7头身)。发型/瞳色与全局图一致。" },
+    { "stage": 5, "name": "expressions", "label": "表情 (基于头部)",
+      "parts": ["expr_happy_eyes", "expr_closed_eyes", "expr_smile_mouth", "expr_surprised_mouth"],
+      "depends_on": ["head"],
+      "context": "眼睛/嘴部需与头部脸型、五官位置对齐。瞳色与head阶段一致，表情夸张度适中。" }
+  ],
+  "groups": [
+    {
+      "id": "body_main",
+      "label": "主体 Main Body",
+      "parts": [
+        { "id": "head", "label": "头部 Head", "x": 30, "y": 40, "w": 180, "h": 170 },
+        { "id": "torso", "label": "躯干 Torso", "x": 230, "y": 40, "w": 260, "h": 340 }
+      ]
+    },
+    {
+      "id": "expressions",
+      "label": "表情组件 Expressions",
+      "parts": [
+        { "id": "expr_happy_eyes", "label": "开心眼\nHappy Eyes", "x": 530, "y": 70, "w": 105, "h": 55 },
+        { "id": "expr_closed_eyes", "label": "闭眼\nClosed Eyes", "x": 645, "y": 70, "w": 105, "h": 55 },
+        { "id": "expr_smile_mouth", "label": "微笑嘴\nSmile Mouth", "x": 530, "y": 140, "w": 105, "h": 55 },
+        { "id": "expr_surprised_mouth", "label": "惊讶嘴\nSurprised Mouth", "x": 645, "y": 140, "w": 105, "h": 55 }
+      ]
+    },
+    {
+      "id": "upper_limbs",
+      "label": "上肢 Upper Limbs",
+      "parts": [
+        { "id": "upper_arm_L", "label": "左上臂\nL-Upper Arm", "x": 30, "y": 400, "w": 90, "h": 160 },
+        { "id": "upper_arm_R", "label": "右上臂\nR-Upper Arm", "x": 135, "y": 400, "w": 90, "h": 160 },
+        { "id": "forearm_L", "label": "左前臂\nL-Forearm", "x": 240, "y": 400, "w": 80, "h": 145 },
+        { "id": "forearm_R", "label": "右前臂\nR-Forearm", "x": 335, "y": 400, "w": 80, "h": 145 },
+        { "id": "hand_L", "label": "左手\nL-Hand", "x": 435, "y": 400, "w": 70, "h": 70 },
+        { "id": "hand_R", "label": "右手\nR-Hand", "x": 520, "y": 400, "w": 70, "h": 70 }
+      ]
+    },
+    {
+      "id": "lower_limbs",
+      "label": "下肢 Lower Limbs",
+      "parts": [
+        { "id": "thigh_L", "label": "左大腿\nL-Thigh", "x": 30, "y": 610, "w": 95, "h": 155 },
+        { "id": "thigh_R", "label": "右大腿\nR-Thigh", "x": 140, "y": 610, "w": 95, "h": 155 },
+        { "id": "calf_L", "label": "左小腿\nL-Calf", "x": 250, "y": 610, "w": 85, "h": 140 },
+        { "id": "calf_R", "label": "右小腿\nR-Calf", "x": 350, "y": 610, "w": 85, "h": 140 },
+        { "id": "foot_L", "label": "左脚\nL-Foot", "x": 455, "y": 610, "w": 90, "h": 35 },
+        { "id": "foot_R", "label": "右脚\nR-Foot", "x": 560, "y": 610, "w": 90, "h": 35 }
+      ]
+    }
+  ]
+}

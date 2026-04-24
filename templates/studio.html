@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2D Character Parts — Studio</title>
+<style>
+:root {
+  --bg: #f0f2f5;
+  --card: #fff;
+  --border: #e0e0e0;
+  --accent: #4a90d9;
+  --accent-hover: #357abd;
+  --success: #52c41a;
+  --text: #333;
+  --text-muted: #888;
+  --radius: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); }
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+/* Header */
+.header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 20px; background: var(--card);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.header h1 { font-size: 16px; font-weight: 600; }
+.header .badge { font-size: 11px; color: var(--text-muted); background: #f5f5f5; padding: 2px 8px; border-radius: 10px; }
+.header .actions { margin-left: auto; display: flex; gap: 8px; }
+.header .status { font-size: 12px; color: var(--text-muted); padding: 4px 10px; }
+
+/* Main layout */
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* Left: SVG Reference */
+.ref-panel {
+  width: 420px; flex-shrink: 0; overflow-y: auto;
+  padding: 16px; background: var(--card);
+  border-right: 1px solid var(--border);
+}
+.ref-panel h2 { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+.ref-panel img { width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
+
+/* Right: Part Canvas */
+.canvas {
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+/* Global section */
+.global-card {
+  background: var(--card); border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.global-card .header-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; background: #fafafa; border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.global-card .header-row .label { font-weight: 600; font-size: 13px; }
+.global-card .header-row .ar-badge { font-size: 11px; color: var(--text-muted); }
+.global-card .body { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.global-card .preview { display: flex; gap: 12px; align-items: flex-start; }
+.global-card .preview img { max-width: 120px; border: 1px solid var(--border); border-radius: 4px; }
+
+/* Part card */
+.part-card {
+  background: var(--card); border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.part-card .header-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; background: #fafafa; border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  cursor: pointer; user-select: none;
+}
+.part-card .header-row:hover { background: #f0f4ff; }
+.part-card .header-row .num { font-size: 11px; color: var(--text-muted); width: 24px; }
+.part-card .header-row .label { font-weight: 500; font-size: 13px; flex: 1; }
+.part-card .header-row .dim { font-size: 11px; color: var(--text-muted); }
+.part-card .header-row .status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ddd;
+}
+.part-card .header-row .status-dot.done { background: var(--success); }
+.part-card .header-row .arrow { font-size: 10px; color: var(--text-muted); transition: transform .2s; }
+.part-card .header-row .arrow.open { transform: rotate(90deg); }
+
+.part-card .body {
+  padding: 10px 14px; display: none; flex-direction: column;
+  gap: 8px;
+}
+.part-card .body.open { display: flex; }
+
+.part-card .body .img-row { display: flex; gap: 12px; }
+.part-card .body .img-row img { max-width: 100px; max-height: 100px; border: 1px solid var(--border); border-radius: 4px; }
+
+textarea {
+  width: 100%; min-height: 60px; padding: 8px; font-size: 12px;
+  font-family: monospace; border: 1px solid var(--border);
+  border-radius: 4px; resize: vertical; line-height: 1.4;
+}
+textarea:focus { outline: none; border-color: var(--accent); }
+
+.btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+button {
+  padding: 6px 14px; font-size: 12px; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--card); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: all .15s;
+}
+button:hover { background: #f5f5f5; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.primary:hover { background: var(--accent-hover); }
+button.primary:disabled { opacity: .5; cursor: not-allowed; }
+button.danger { color: #e74c3c; border-color: #e74c3c; }
+button.danger:hover { background: #fff0f0; }
+button.sm { padding: 3px 8px; font-size: 11px; }
+
+.spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid #ddd; border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.hint { font-size: 11px; color: var(--text-muted); }
+
+/* Batch bar */
+.batch-bar {
+  display: flex; gap: 8px; align-items: center; padding: 10px 0;
+  border-top: 1px solid var(--border); margin-top: 4px;
+}
+
+/* Progress */
+.progress-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.3); display: none; align-items: center; justify-content: center; z-index: 100;
+}
+.progress-overlay.active { display: flex; }
+.progress-box {
+  background: var(--card); border-radius: var(--radius); padding: 24px;
+  min-width: 320px; box-shadow: 0 8px 32px rgba(0,0,0,.15);
+}
+.progress-box h3 { font-size: 14px; margin-bottom: 12px; }
+.progress-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+.progress-item .check { color: var(--success); }
+.progress-item .wait { color: var(--text-muted); }
+.progress-item .loading .spinner { width: 10px; height: 10px; }
+
+@media (max-width: 800px) {
+  .main { flex-direction: column; }
+  .ref-panel { width: 100%; max-height: 300px; border-right: none; border-bottom: 1px solid var(--border); }
+}
+
+/* Log panel */
+.log-panel {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+  background: var(--card); border-top: 2px solid var(--accent);
+  max-height: 40vh; display: flex; flex-direction: column;
+  transform: translateY(0); transition: transform .25s;
+}
+.log-panel.collapsed { transform: translateY(calc(100% - 32px)); }
+.log-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; background: #fafafa; border-bottom: 1px solid var(--border);
+  cursor: pointer; user-select: none; flex-shrink: 0; min-height: 32px;
+}
+.log-header h3 { font-size: 12px; font-weight: 600; flex: 1; }
+.log-header .log-count { font-size: 11px; color: var(--text-muted); }
+.log-body { overflow-y: auto; flex: 1; padding: 8px 14px; }
+.log-entry {
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 11px; line-height: 1.6;
+}
+.log-entry:last-child { border-bottom: none; }
+.log-entry .log-line { display: flex; gap: 8px; align-items: flex-start; }
+.log-entry .log-time { color: var(--text-muted); white-space: nowrap; min-width: 70px; }
+.log-entry .log-part { font-weight: 600; color: var(--accent); min-width: 100px; }
+.log-entry .log-status { font-weight: 600; }
+.log-entry .log-status.ok { color: var(--success); }
+.log-entry .log-status.err { color: #e74c3c; }
+.log-entry .log-prompt { color: var(--text); word-break: break-all; max-height: 60px; overflow: hidden; margin-top: 4px; }
+.log-entry .log-refs { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+.log-entry .log-ref-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 3px;
+  background: #eef6ff; color: var(--accent); font-size: 10px;
+  font-family: monospace;
+}
+.log-entry .log-model { color: var(--text-muted); font-size: 10px; }
+.log-clear-btn { font-size: 10px; color: var(--text-muted); cursor: pointer; border: none; background: none; }
+.log-clear-btn:hover { color: #e74c3c; }
+
+/* lil-gui panel: place below header on the right, between ref panel and canvas */
+.lil-gui.root {
+  top: 52px !important;
+  left: auto !important;
+  right: 12px !important;
+}
+@media (max-width: 800px) {
+  .lil-gui.root { top: auto !important; bottom: 40px !important; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h1>2D Character Parts Studio</h1>
+    <span class="badge" id="backend-badge">Canvas</span>
+    <div class="actions">
+      <span class="status" id="api-status">○ checking...</span>
+      <button class="danger sm" onclick="cancelGeneration()" title="Cancel current generation">⏹ Cancel</button>
+      <button id="btn-batch" class="primary" onclick="batchGenerate()">⚡ Generate All</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- Left: Reference -->
+    <div class="ref-panel" id="ref-panel">
+      <h2>Reference Template</h2>
+      <div id="ref-container" style="position:relative;width:100%;aspect-ratio:1/1;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:#fff;">
+        <img id="ref-svg" src="../templates/exploded_view.svg" alt="Template" style="width:100%;height:100%;display:block;">
+        <div id="ref-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted);" id="ref-legend">
+        ⬜ = not generated &nbsp; 🟢 = generated
+      </div>
+    </div>
+
+    <!-- Right: Canvas -->
+    <div class="canvas" id="canvas"></div>
+  </div>
+</div>
+
+<!-- Progress overlay -->
+<div class="progress-overlay" id="progress-overlay">
+  <div class="progress-box">
+    <h3>Generating...</h3>
+    <div id="progress-list"></div>
+  </div>
+</div>
+
+<!-- Call Log -->
+<div class="log-panel collapsed" id="log-panel">
+  <div class="log-header" onclick="toggleLog()">
+    <h3>📋 Call Log</h3>
+    <span class="log-count" id="log-count">0 calls</span>
+    <button class="log-clear-btn" onclick="event.stopPropagation(); clearLog()">clear</button>
+  </div>
+  <div class="log-body" id="log-body"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.20/dist/lil-gui.umd.min.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────
+let PARTS = [];
+let GLOBAL_PROMPT = null;
+let LAYOUT_CONFIG = null;
+let GUI_PANEL = null;  // lil-gui instance
+let GENERATED = new Set();  // part_ids that have been generated
+let BACKEND = 'openrouter';
+const SVG_VB = { w: 800, h: 800 };
+
+// ── DAG Dependency Resolver ───────────────────────────────
+// Within-stage L→R chain: later parts depend on L counterpart + previous in chain
+const CHAIN_ORDER = [
+  // Lower limbs (L then R per link)
+  ['thigh_L', 'thigh_R'],
+  ['calf_L', 'calf_R'],
+  ['foot_L', 'foot_R'],
+  // Upper limbs (L then R per link)
+  ['upper_arm_L', 'upper_arm_R'],
+  ['forearm_L', 'forearm_R'],
+  ['hand_L', 'hand_R'],
+  // Expressions follow list order
+  ['expr_happy_eyes', 'expr_closed_eyes', 'expr_smile_mouth', 'expr_surprised_mouth'],
+  // Standalone
+  ['head'], ['torso'], ['global_reference'],
+];
+
+function resolveDeps(partId, pipeline) {
+  if (!pipeline) return [];
+  if (partId === 'global_reference') return [];
+
+  const deps = new Set();
+  deps.add('global_reference');
+
+  // Find which stage this part belongs to
+  let myStage = null;
+  for (const s of pipeline) {
+    if (s.parts.includes(partId)) { myStage = s; break; }
+  }
+  if (!myStage) return [...deps];
+
+  // Add parts from depends_on stages
+  const stageByName = {};
+  pipeline.forEach(s => { stageByName[s.name] = s; });
+  (myStage.depends_on || []).forEach(name => {
+    const depStage = stageByName[name];
+    if (depStage) depStage.parts.forEach(pid => deps.add(pid));
+  });
+
+  // Within-stage chain predecessors
+  for (const chain of CHAIN_ORDER) {
+    const idx = chain.indexOf(partId);
+    if (idx < 0) continue;
+    // Depend on everything before this part in the chain
+    for (let i = 0; i < idx; i++) deps.add(chain[i]);
+    break;
+  }
+
+  // Also depend on the L counterpart for R parts
+  // and previous link in same limb chain
+  const SIDE_CHAINS = [
+    ['thigh_L', 'calf_L', 'foot_L'], ['thigh_R', 'calf_R', 'foot_R'],
+    ['upper_arm_L', 'forearm_L', 'hand_L'], ['upper_arm_R', 'forearm_R', 'hand_R'],
+  ];
+  for (const chain of SIDE_CHAINS) {
+    const idx = chain.indexOf(partId);
+    if (idx > 0) deps.add(chain[idx - 1]); // previous link
+    // for R side, add L counterpart
+    if (partId.endsWith('_R')) {
+      const lCounter = partId.replace('_R', '_L');
+      if (chain.includes(lCounter) && chain.indexOf(lCounter) < idx) deps.add(lCounter);
+    }
+  }
+
+  deps.delete(partId); // don't depend on self
+  return [...deps];
+}
+
+function getMissingDeps(partId) {
+  if (!LAYOUT_CONFIG || !LAYOUT_CONFIG.pipeline) return [];
+  const deps = resolveDeps(partId, LAYOUT_CONFIG.pipeline);
+  return deps.filter(d => !GENERATED.has(d));
+}
+
+async function refreshGenerated() {
+  try {
+    const resp = await fetch('/api/parts');
+    const parts = await resp.json();
+    GENERATED.clear();
+    parts.forEach(p => { if (p.generated) GENERATED.add(p.id); });
+    const gr = await fetch('/parts/global_reference.png', { method: 'HEAD' });
+    if (gr.ok) GENERATED.add('global_reference');
+  } catch (e) { /* ignore */ }
+}
+
+function updateParamInfo() {
+  if (!LAYOUT_CONFIG || !LAYOUT_CONFIG.pipeline) return;
+  PARTS.forEach(p => {
+    const el = document.getElementById(`param-${p.id}`);
+    if (!el) return;
+    const deps = resolveDeps(p.id, LAYOUT_CONFIG.pipeline);
+    const satisfied = deps.filter(d => GENERATED.has(d));
+    const missing = deps.filter(d => !GENERATED.has(d));
+    const refCount = satisfied.length;
+    const model = p.model || '?';
+    const stage = p.stage != null ? p.stage : -1;
+    const mode = refCount > 0 ? 'img2img' : (stage === 0 ? 't2i (root)' : 't2i');
+
+    let html = `<span style="color:var(--accent);">⚙ ${model}</span> · ${mode}`;
+    if (stage >= 0) html += ` · stage ${stage}`;
+    if (refCount > 0) {
+      html += ` · refs: <b>${refCount}</b> image${refCount>1?'s':''}`;
+      const refNames = satisfied.slice(0, 3).map(d => {
+        if (d === 'global_reference') return '全局';
+        const fp = PARTS.find(x => x.id === d);
+        return fp ? fp.label_cn : d;
+      });
+      html += ` <span style="color:var(--success);">(${refNames.join(', ')})</span>`;
+    }
+    if (missing.length > 0) {
+      html += ` <span style="color:#e74c3c;">⚠ need: ${missing.length} dep${missing.length>1?'s':''}</span>`;
+    } else if (deps.length === 0) {
+      html += ' · no deps (root)';
+    } else {
+      html += ' <span style="color:var(--success);">✓ all deps ready</span>';
+    }
+    el.innerHTML = html;
+  });
+}
+
+// ── Reference Overlay ───────────────────────────────────
+function refreshRefOverlay() {
+  const container = document.getElementById('ref-container');
+  const overlay = document.getElementById('ref-overlay');
+  if (!container || !overlay || !LAYOUT_CONFIG) return;
+
+  const cw = container.clientWidth;
+  const ch = container.clientHeight;
+  const scale = cw / SVG_VB.w;  // uniform scale from 800x800 viewBox
+
+  overlay.innerHTML = '';
+
+  // Global ref slot
+  const slot = LAYOUT_CONFIG.global_ref_slot;
+  if (slot) {
+    const img = document.createElement('img');
+    img.src = `/parts/global_reference.png?t=${Date.now()}`;
+    img.style.cssText = [
+      `position:absolute`,
+      `left:${slot.x * scale}px`,
+      `top:${slot.y * scale}px`,
+      `width:${slot.w * scale}px`,
+      `height:${slot.h * scale}px`,
+      `object-fit:contain`,
+      `border:2px solid #4a90d9`,
+      `border-radius:2px`,
+      `background:#eef6ff`,
+    ].join(';');
+    img.onerror = function() { this.style.display = 'none'; };
+    overlay.appendChild(img);
+  }
+
+  // Part slots
+  for (const g of LAYOUT_CONFIG.groups) {
+    for (const p of g.parts) {
+      const img = document.createElement('img');
+      img.src = `/parts/${p.id}.png?t=${Date.now()}`;
+      img.style.cssText = [
+        `position:absolute`,
+        `left:${p.x * scale}px`,
+        `top:${p.y * scale}px`,
+        `width:${p.w * scale}px`,
+        `height:${p.h * scale}px`,
+        `object-fit:contain`,
+        `border:1.5px solid #52c41a`,
+        `border-radius:2px`,
+        `background:rgba(255,255,255,0.6)`,
+      ].join(';');
+      img.onerror = function() { this.style.display = 'none'; };
+      overlay.appendChild(img);
+    }
+  }
+}
+
+// ── Settings & Control Panel ────────────────────────────
+const SETTINGS_KEY = 'studio_settings_v2';
+
+let SETTINGS = {
+  backend: 'openrouter',
+  api_key: '',
+  root_model: 'bytedance-seed/seedream-4.5',
+  ref_model: 'google/gemini-3.1-flash-image-preview',
+  character_hair: 'silver long hair, side ponytail',
+  character_eyes: 'purple eyes',
+  character_outfit: 'sailor school uniform, red bow tie',
+  character_pose: 'standing A-pose, full body visible, looking at viewer, slight smile',
+  preset_quality: 'masterpiece, best quality, highres, extremely detailed CG, perfect lighting',
+  preset_style: 'anime style, clean lineart, flat shading, solid flat colors, game character sprite, 2D',
+  preset_background: 'simple white background, plain background, no shadow',
+  preset_negative: 'lowres, bad anatomy, bad hands, text, error, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, out of frame, ugly, deformed, blur, bad proportions, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
+  image_root_ar: '9:16',
+  image_root_size: '2K',
+  image_part_ar: '1:1',
+  image_part_size: '1K',
+};
+
+// ── Call Log ───────────────────────────────────────────
+let LOG = [];
+
+function pushLog(partId, prompt, refMeta, model, status, timingMs, seed) {
+  const part = PARTS.find(p => p.id === partId);
+  const label = part ? part.label_cn : partId;
+  LOG.unshift({
+    time: new Date().toLocaleTimeString(),
+    partId, label,
+    prompt: prompt || '',
+    refMeta: refMeta || [],
+    model: model || '?',
+    status, timingMs, seed,
+  });
+  if (LOG.length > 200) LOG.length = 200;
+  renderLog();
+}
+
+function renderLog() {
+  const body = document.getElementById('log-body');
+  const count = document.getElementById('log-count');
+  if (!body || !count) return;
+  count.textContent = LOG.length + ' calls';
+  if (LOG.length === 0) {
+    body.innerHTML = '<div style="color:var(--text-muted);font-size:11px;padding:12px 0;">No calls yet. Generate a part to see logs.</div>';
+    return;
+  }
+  body.innerHTML = LOG.map(e => {
+    const statusCls = e.status === 'ok' ? 'ok' : 'err';
+    const refTags = e.refMeta.map(r =>
+      `<span class="log-ref-tag">[img:${r.idx}:${r.part_id}] ${r.label_cn}</span>`
+    ).join(' ');
+    const promptPreview = (e.prompt || '').replace(/</g, '&lt;').substring(0, 300);
+    return `<div class="log-entry">
+      <div class="log-line">
+        <span class="log-time">${e.time}</span>
+        <span class="log-part">${e.label} (${e.partId})</span>
+        <span class="log-status ${statusCls}">${e.status === 'ok' ? '✓' : '✗'} ${e.timingMs || '?'}ms</span>
+        <span class="log-model">${e.model}</span>
+        ${e.seed != null ? `<span style="font-size:10px;color:var(--text-muted);">seed:${e.seed}</span>` : ''}
+      </div>
+      ${refTags ? `<div class="log-refs">${refTags}</div>` : ''}
+      <div class="log-prompt">${promptPreview}${(e.prompt||'').length > 300 ? '...' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleLog() {
+  document.getElementById('log-panel').classList.toggle('collapsed');
+}
+
+function clearLog() {
+  LOG = [];
+  renderLog();
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) Object.assign(SETTINGS, JSON.parse(raw));
+  } catch (e) { /* ignore */ }
+}
+
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+}
+
+async function fetchModelList() {
+  try {
+    const resp = await fetch('/api/model-list');
+    const data = await resp.json();
+    return (data.models || []).map(m => m.id);
+  } catch (e) {
+    return [SETTINGS.root_model, SETTINGS.ref_model, 'black-forest-labs/flux.2-pro', 'openai/gpt-5-image'];
+  }
+}
+
+async function applyProfileSettings() {
+  // Rebuild prompts with current character/preset settings
+  try {
+    const profile = {
+      character: {
+        hair: SETTINGS.character_hair,
+        eyes: SETTINGS.character_eyes,
+        outfit: SETTINGS.character_outfit,
+        pose: SETTINGS.character_pose,
+      },
+      presets: {
+        quality: SETTINGS.preset_quality,
+        style: SETTINGS.preset_style,
+        background: SETTINGS.preset_background,
+        negative: SETTINGS.preset_negative,
+      },
+      root_model: SETTINGS.root_model,
+      ref_model: SETTINGS.ref_model,
+    };
+    const resp = await fetch('/api/prompts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(profile),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      GLOBAL_PROMPT = data.global;
+      PARTS = data.parts;
+      render();
+      updateParamInfo();
+      refreshRefOverlay();
+    }
+  } catch (e) {
+    console.warn('Failed to refresh prompts:', e);
+  }
+}
+
+async function applyApiKey() {
+  if (!SETTINGS.api_key) return;
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({api_key: SETTINGS.api_key}),
+    });
+  } catch (e) { /* ignore */ }
+}
+
+function initControlPanel() {
+  const gui = new lil.GUI({ title: '⚙ Settings', width: 340 });
+  GUI_PANEL = gui;
+
+  // ── Backend & API ────────────────────────────────────
+  const f1 = gui.addFolder('Backend & API');
+  f1.add(SETTINGS, 'backend', ['openrouter', 'siliconflow'])
+    .onChange(v => { saveSettings(); applyProfileSettings(); });
+  f1.add(SETTINGS, 'api_key').onFinishChange(() => { saveSettings(); applyApiKey(); });
+
+  // ── Models ────────────────────────────────────────────
+  const f2 = gui.addFolder('Models');
+  // These will be populated with real model IDs initially,
+  // then refreshed when model list is fetched
+  const rootCtrl = f2.add(SETTINGS, 'root_model');
+  rootCtrl.onChange(() => { saveSettings(); applyProfileSettings(); });
+  const refCtrl = f2.add(SETTINGS, 'ref_model');
+  refCtrl.onChange(() => { saveSettings(); applyProfileSettings(); });
+
+  // Async populate model lists
+  fetchModelList().then(modelIds => {
+    if (modelIds.length > 0) {
+      rootCtrl.options(modelIds);
+      refCtrl.options(modelIds);
+      // Ensure current values are in the list
+      if (!modelIds.includes(SETTINGS.root_model)) {
+        SETTINGS.root_model = modelIds[0];
+        saveSettings();
+      }
+      if (!modelIds.includes(SETTINGS.ref_model)) {
+        SETTINGS.ref_model = modelIds[0];
+        saveSettings();
+      }
+    }
+  });
+
+  f2.add({refreshModels: () => {
+    fetchModelList().then(modelIds => {
+      if (modelIds.length > 0) {
+        rootCtrl.options(modelIds);
+        refCtrl.options(modelIds);
+      }
+    });
+  }}, 'refreshModels').name('⟳ Refresh Model List');
+
+  // ── Character Profile ─────────────────────────────────
+  const f3 = gui.addFolder('Character Profile');
+  f3.add(SETTINGS, 'character_hair').name('Hair').onFinishChange(saveSettings);
+  f3.add(SETTINGS, 'character_eyes').name('Eyes').onFinishChange(saveSettings);
+  f3.add(SETTINGS, 'character_outfit').name('Outfit').onFinishChange(saveSettings);
+  f3.add(SETTINGS, 'character_pose').name('Pose').onFinishChange(saveSettings);
+  f3.add({applyProfile: applyProfileSettings}, 'applyProfile').name('🔄 Apply & Regenerate Prompts');
+
+  // ── Prompt Presets ────────────────────────────────────
+  const f4 = gui.addFolder('Prompt Presets');
+  f4.add(SETTINGS, 'preset_quality').name('Quality').onFinishChange(saveSettings);
+  f4.add(SETTINGS, 'preset_style').name('Style').onFinishChange(saveSettings);
+  f4.add(SETTINGS, 'preset_background').name('Background').onFinishChange(saveSettings);
+  f4.add(SETTINGS, 'preset_negative').name('Negative').onFinishChange(saveSettings);
+  f4.add({applyPresets: applyProfileSettings}, 'applyPresets').name('🔄 Apply & Regenerate Prompts');
+
+  // ── Image Config ──────────────────────────────────────
+  const f5 = gui.addFolder('Image Config');
+  f5.add(SETTINGS, 'image_root_ar', ['9:16', '2:3', '3:4', '1:1', '16:9']).name('Root AR').onChange(saveSettings);
+  f5.add(SETTINGS, 'image_root_size', ['1K', '2K', '4K']).name('Root Size').onChange(saveSettings);
+  f5.add(SETTINGS, 'image_part_ar', ['1:1', '3:4', '4:3', '9:16']).name('Part AR').onChange(saveSettings);
+  f5.add(SETTINGS, 'image_part_size', ['1K', '2K', '4K']).name('Part Size').onChange(saveSettings);
+
+  // ── Reset ─────────────────────────────────────────────
+  gui.add({resetAll: () => {
+    localStorage.removeItem(SETTINGS_KEY);
+    location.reload();
+  }}, 'resetAll').name('↺ Reset All Defaults');
+}
+
+// ── Initialize ─────────────────────────────────────────
+async function init() {
+  try {
+    // Load config + prompts in parallel
+    const [cfgResp, promptsResp] = await Promise.all([
+      fetch('/api/config'),
+      fetch('/api/prompts'),
+    ]);
+
+    if (!cfgResp.ok || !promptsResp.ok) throw new Error('Server error');
+
+    LAYOUT_CONFIG = await cfgResp.json();
+    const data = await promptsResp.json();
+    BACKEND = data.backend || 'openrouter';
+    GLOBAL_PROMPT = data.global;
+    PARTS = data.parts;
+    await refreshGenerated();
+    render();
+    refreshRefOverlay();
+    updateParamInfo();
+    loadSettings();
+    initControlPanel();
+    if (SETTINGS.api_key) await applyApiKey();
+    document.getElementById('api-status').textContent = '✓ ready';
+    document.getElementById('api-status').style.color = 'var(--success)';
+    const bb = document.getElementById('backend-badge');
+    if (bb) bb.textContent = BACKEND;
+  } catch (e) {
+    document.getElementById('api-status').textContent = '✗ server unreachable';
+    document.getElementById('api-status').style.color = '#e74c3c';
+    const el = document.getElementById('ref-panel');
+    const existing = el.querySelector('div');
+    if (existing) existing.innerHTML =
+      '<div style="color:#e74c3c;font-size:13px;">⚠ Cannot reach API server.<br>Run: <code style="background:#f5f5f5;padding:2px 6px;border-radius:3px;">python3 scripts/studio.py</code></div>';
+  }
+}
+
+// ── Render ─────────────────────────────────────────────
+function render() {
+  const canvas = document.getElementById('canvas');
+  canvas.innerHTML = '';
+
+  // Global
+  const globalCard = document.createElement('div');
+  globalCard.className = 'global-card';
+  globalCard.innerHTML = `
+    <div class="header-row">
+      <span class="label">🌐 Global Reference</span>
+      <span class="ar-badge">AR: ${GLOBAL_PROMPT.ar}</span>
+      <span class="ar-badge" style="color:var(--accent);">${GLOBAL_PROMPT.model || ''}</span>
+    </div>
+    <div class="body">
+      <div class="preview">
+        <img id="global-preview" src="/parts/global_reference.png" alt="preview"
+             onerror="this.style.display='none'" style="display:none">
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+          <textarea id="ta-global" oninput="autoResize(this)">${GLOBAL_PROMPT.positive}</textarea>
+          <div class="btn-row">
+            <button class="primary sm" onclick="generateGlobal()">🔄 Generate</button>
+            <button class="sm" onclick="copyText('ta-global')">📋 Copy</button>
+            <span class="hint" id="hint-global"></span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  canvas.appendChild(globalCard);
+
+  // Parts
+  PARTS.forEach((p, i) => {
+    const card = document.createElement('div');
+    card.className = 'part-card';
+    card.dataset.id = p.id;
+
+    const num = i + 1;
+    card.innerHTML = `
+      <div class="header-row" onclick="toggleBody(this)">
+        <span class="num">${num}/18</span>
+        <span class="label">${p.label_cn}</span>
+        <span class="dim">${p.id} · ${p.w}×${p.h}</span>
+        <span class="status-dot" id="dot-${p.id}"></span>
+        <span class="arrow">▶</span>
+      </div>
+      <div class="body">
+        <div class="img-row">
+          <img id="preview-${p.id}" src="/parts/${p.id}.png" alt="${p.id}"
+               onerror="this.style.display='none'"
+               style="display:none;max-width:80px;max-height:80px;">
+        </div>
+        <textarea id="ta-${p.id}" oninput="autoResize(this)">${p.positive}</textarea>
+        <div class="param-info" id="param-${p.id}" style="font-size:11px;color:var(--text-muted);padding:4px 0;border-top:1px dashed var(--border);">
+          🔍 checking dependencies...
+        </div>
+        <div class="btn-row">
+          <button class="primary sm" onclick="generatePart('${p.id}')">🔄 Generate</button>
+          <button class="sm" onclick="copyText('ta-${p.id}')">📋 Copy</button>
+          <button class="sm" onclick="resetPrompt('${p.id}')">↺ Reset</button>
+          <span class="hint" id="hint-${p.id}"></span>
+        </div>
+      </div>`;
+
+    canvas.appendChild(card);
+
+    // Check if already generated
+    fetch(`/parts/${p.id}.png`).then(r => {
+      if (r.ok) {
+        document.getElementById(`dot-${p.id}`).classList.add('done');
+        const img = document.getElementById(`preview-${p.id}`);
+        img.style.display = 'block';
+        img.src = `/parts/${p.id}.png?t=${Date.now()}`;
+      }
+    });
+  });
+
+  // Batch bar
+  const bar = document.createElement('div');
+  bar.className = 'batch-bar';
+  bar.innerHTML = `
+    <button class="primary" onclick="batchGenerate()">⚡ Generate All 18</button>
+    <span class="hint">Will generate parts one by one</span>`;
+  canvas.appendChild(bar);
+}
+
+// ── Generate ───────────────────────────────────────────
+let activeController = null;  // AbortController for cancellation
+
+function formatElapsed(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+async function generateGlobal() {
+  const ta = document.getElementById('ta-global');
+  const hintEl = document.getElementById('hint-global') || createGlobalHint();
+  hintEl.innerHTML = '<span class="spinner"></span> waiting...';
+
+  // Cancel any previous request
+  if (activeController) activeController.abort();
+  activeController = new AbortController();
+
+  const startTime = Date.now();
+  let timer = setInterval(() => {
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    hintEl.innerHTML = `<span class="spinner"></span> generating... ${formatElapsed(elapsed)}`;
+  }, 1000);
+
+  try {
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({part_id: 'global_reference', positive: ta.value, negative: GLOBAL_PROMPT.negative, image_size: '928x1664', model: SETTINGS.root_model, image_size_or: SETTINGS.image_root_size, aspect_ratio: SETTINGS.image_root_ar}),
+      signal: activeController.signal,
+    });
+    clearInterval(timer);
+    const data = await resp.json();
+    if (data.error) {
+      hintEl.innerHTML = `✗ ${data.error}`;
+      pushLog('global_reference', ta.value, [], SETTINGS.root_model, 'err', 0, null);
+      return;
+    }
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    hintEl.innerHTML = `✓ seed: ${data.seed} · inference: ${data.timing_ms || '?'}ms · total: ${formatElapsed(elapsed)}`;
+    pushLog('global_reference', data.prompt || ta.value, data.ref_meta || [], SETTINGS.root_model, 'ok', data.timing_ms, data.seed);
+    GENERATED.add('global_reference');
+    const img = document.getElementById('global-preview');
+    img.style.display = 'block';
+    img.src = `/parts/global_reference.png?t=${Date.now()}`;
+    refreshRefOverlay();
+    updateParamInfo();
+  } catch (e) {
+    clearInterval(timer);
+    if (e.name === 'AbortError') {
+      hintEl.innerHTML = '⚠ cancelled';
+    } else {
+      hintEl.innerHTML = `✗ ${e.message || 'Network error — check server is running'}`;
+    }
+  }
+}
+
+async function generatePart(id) {
+  const ta = document.getElementById(`ta-${id}`);
+  const hint = document.getElementById(`hint-${id}`);
+  if (!hint) return;
+
+  // ── Dependency check ──────────────────────────────────
+  await refreshGenerated();
+  const missing = getMissingDeps(id);
+  if (missing.length > 0) {
+    const labels = missing.map(d => {
+      if (d === 'global_reference') return 'Global Reference 全局参考';
+      const p = PARTS.find(x => x.id === d);
+      return p ? `${p.label_cn} (${d})` : d;
+    });
+    hint.textContent = `✗ 缺少依赖: ${labels.join(', ')}`;
+    hint.style.color = '#e74c3c';
+    setTimeout(() => { hint.style.color = ''; }, 4000);
+    return;
+  }
+
+  // Build reference images from satisfied dependencies
+  const allDeps = resolveDeps(id, LAYOUT_CONFIG.pipeline);
+  const refImages = allDeps.filter(d => GENERATED.has(d)).map(d => `/parts/${d}.png`);
+
+  // Cancel any previous request
+  if (activeController) activeController.abort();
+  activeController = new AbortController();
+
+  const startTime = Date.now();
+  let timer = setInterval(() => {
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    hint.innerHTML = `<span class="spinner"></span> generating... ${formatElapsed(elapsed)}`;
+    hint.style.color = '';
+  }, 1000);
+
+  try {
+    const partInfo = PARTS.find(x => x.id === id);
+    const genModel = (partInfo && partInfo.model) ? partInfo.model : undefined;
+    const reqBody = {
+      part_id: id, positive: ta.value,
+      negative: (partInfo && partInfo.negative) ? partInfo.negative : GLOBAL_PROMPT.negative, image_size: '1328x1328',
+      image_size_or: SETTINGS.image_part_size, aspect_ratio: SETTINGS.image_part_ar,
+    };
+    if (genModel) reqBody.model = genModel;
+    if (refImages.length) reqBody.ref_images = refImages;
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(reqBody),
+      signal: activeController.signal,
+    });
+    clearInterval(timer);
+    const data = await resp.json();
+    if (data.error) {
+      hint.textContent = `✗ ${data.error}`; hint.style.color = '#e74c3c';
+      pushLog(id, ta.value, [], genModel || '?', 'err', 0, null);
+      return;
+    }
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    hint.innerHTML = `✓ seed: ${data.seed} · ${data.timing_ms || '?'}ms · ${formatElapsed(elapsed)}`;
+    hint.style.color = '';
+    pushLog(id, data.prompt || ta.value, data.ref_meta || [], genModel || '?', 'ok', data.timing_ms, data.seed);
+
+    GENERATED.add(id);
+    document.getElementById(`dot-${id}`).classList.add('done');
+    const img = document.getElementById(`preview-${id}`);
+    img.style.display = 'block';
+    img.src = `/parts/${id}.png?t=${Date.now()}`;
+    refreshRefOverlay();
+    updateParamInfo();
+  } catch (e) {
+    clearInterval(timer);
+    if (e.name === 'AbortError') {
+      hint.textContent = '⚠ cancelled';
+    } else {
+      hint.textContent = `✗ ${e.message || 'Network error'}`;
+    }
+    hint.style.color = '#e74c3c';
+  }
+}
+
+function cancelGeneration() {
+  if (activeController) {
+    activeController.abort();
+    activeController = null;
+  }
+}
+
+async function batchGenerate() {
+  const overlay = document.getElementById('progress-overlay');
+  const list = document.getElementById('progress-list');
+  overlay.classList.add('active');
+  list.innerHTML = '';
+
+  if (activeController) activeController.abort();
+  activeController = new AbortController();
+
+  // Fetch pipeline config
+  let pipeline;
+  try {
+    const cfgResp = await fetch('/api/config');
+    const cfg = await cfgResp.json();
+    pipeline = cfg.pipeline;
+    if (!pipeline) throw new Error('No pipeline in config');
+  } catch (e) {
+    list.innerHTML = '<div class="progress-item">✗ Failed to load pipeline config</div>';
+    setTimeout(() => overlay.classList.remove('active'), 2000);
+    return;
+  }
+
+  // Build lookup: part_id → { prompt, label }
+  const partLookup = {};
+  PARTS.forEach(p => { partLookup[p.id] = p; });
+
+  const batchStart = Date.now();
+  let batchTimer = setInterval(() => {
+    const el = Math.round((Date.now() - batchStart) / 1000);
+    const h3 = overlay.querySelector('h3');
+    if (h3) h3.textContent = `Pipeline running... ${formatElapsed(el)}`;
+  }, 1000);
+
+  const completed = [];
+  let failed = false;
+  let cancelled = false;
+  let globalDone = false;
+
+  // Resolve DAG dependencies: stage name → part_ids generated in that stage
+  const stageOutputs = {};
+  pipeline.forEach(s => { stageOutputs[s.name] = s.parts; });
+
+  for (const stage of pipeline) {
+    if (failed || cancelled) break;
+
+    const stageIds = stage.parts;
+    const stageLabel = stage.label;
+
+    // Build reference images from dependencies
+    const refImages = [];
+    if (stage.depends_on) {
+      stage.depends_on.forEach(depName => {
+        const depParts = stageOutputs[depName] || [];
+        depParts.forEach(pid => {
+          refImages.push(`/parts/${pid}.png`);
+        });
+      });
+    }
+
+    // Stage header
+    const header = document.createElement('div');
+    header.className = 'progress-item';
+    header.style.cssText = 'font-weight:600;color:var(--accent);padding:6px 0;border-top:1px solid var(--border);margin-top:4px;';
+    const refHint = refImages.length ? ` (ref: ${stage.depends_on.join(', ')})` : '';
+    header.textContent = `▸ Stage ${stage.stage}: ${stageLabel} (${stageIds.length} items)${refHint}`;
+    list.appendChild(header);
+    list.scrollTop = list.scrollHeight;
+
+    for (const pid of stageIds) {
+      if (failed || cancelled) break;
+
+      let positive, imgSize, displayLabel, genModel;
+
+      if (pid === 'global_reference') {
+        positive = GLOBAL_PROMPT.positive;
+        imgSize = '928x1664';
+        displayLabel = 'Global Reference 全局参考';
+        genModel = SETTINGS.root_model;
+        negative = GLOBAL_PROMPT.negative;
+        imgSizeOr = SETTINGS.image_root_size;
+        ar = SETTINGS.image_root_ar;
+      } else {
+        const p = partLookup[pid];
+        if (!p) {
+          const skip = document.createElement('div');
+          skip.className = 'progress-item';
+          skip.innerHTML = `<span class="wait">⚠</span> Unknown part: ${pid} — skipped`;
+          list.appendChild(skip);
+          continue;
+        }
+        const ta = document.getElementById(`ta-${pid}`);
+        positive = ta ? ta.value : p.positive;
+        imgSize = '1328x1328';
+        displayLabel = `${p.label_cn} (${pid})`;
+        genModel = p.model || undefined;
+        negative = p.negative || GLOBAL_PROMPT.negative;
+        imgSizeOr = SETTINGS.image_part_size;
+        ar = SETTINGS.image_part_ar;
+      }
+
+      const item = document.createElement('div');
+      item.className = 'progress-item loading';
+      item.id = `progress-${pid}`;
+      item.innerHTML = `<span class="spinner"></span> ${displayLabel} — waiting...`;
+      list.appendChild(item);
+      list.scrollTop = list.scrollHeight;
+
+      const reqBody = {
+        part_id: pid, positive: positive,
+        negative: negative, image_size: imgSize,
+        image_size_or: imgSizeOr, aspect_ratio: ar,
+      };
+      if (genModel) reqBody.model = genModel;
+      if (refImages.length) reqBody.ref_images = refImages;
+
+      const partStart = Date.now();
+      try {
+        const resp = await fetch('/api/generate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(reqBody),
+          signal: activeController.signal,
+        });
+        const data = await resp.json();
+        const partElapsed = Math.round((Date.now() - partStart) / 1000);
+        if (data.error) {
+          item.className = 'progress-item';
+          item.innerHTML = `<span style="color:#e74c3c;">✗</span> ${displayLabel} — ${data.error}`;
+          pushLog(pid, positive, [], genModel || '?', 'err', 0, null);
+          failed = true;
+
+          // Mark remaining stages as skipped
+          const remaining = getRemainingParts(pipeline, stage.stage, pid);
+          remaining.forEach(r => {
+            const skip = document.createElement('div');
+            skip.className = 'progress-item';
+            skip.innerHTML = `<span class="wait">⊘</span> ${r} — skipped (upstream failed)`;
+            list.appendChild(skip);
+          });
+          break;
+        }
+        item.className = 'progress-item';
+        item.innerHTML = `<span class="check">✓</span> ${displayLabel} · seed: ${data.seed} · ${data.timing_ms || '?'}ms · ${formatElapsed(partElapsed)}`;
+        pushLog(pid, data.prompt || positive, data.ref_meta || [], genModel || '?', 'ok', data.timing_ms, data.seed);
+        completed.push(pid);
+        if (pid === 'global_reference') globalDone = true;
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          item.className = 'progress-item';
+          item.innerHTML = `<span class="wait">⚠</span> ${displayLabel} — cancelled`;
+          cancelled = true;
+        } else {
+          item.className = 'progress-item';
+          item.innerHTML = `<span style="color:#e74c3c;">✗</span> ${displayLabel} — ${e.message || 'Network error'}`;
+          failed = true;
+        }
+        break;
+      }
+    }
+  }
+
+  clearInterval(batchTimer);
+  const totalElapsed = Math.round((Date.now() - batchStart) / 1000);
+
+  // Summary
+  const summary = document.createElement('div');
+  summary.className = 'progress-item';
+  summary.style.cssText = 'font-weight:600;border-top:1px solid var(--border);margin-top:6px;padding-top:6px;';
+  if (cancelled) {
+    summary.innerHTML = `<span class="wait">⚠</span> Pipeline cancelled after ${formatElapsed(totalElapsed)} — ${completed.length} done.`;
+  } else if (failed) {
+    summary.innerHTML = `<span style="color:#e74c3c;">✗</span> Pipeline stopped at ${formatElapsed(totalElapsed)} — ${completed.length} completed.`;
+  } else {
+    summary.innerHTML = `<span class="check">✅</span> Pipeline complete! ${completed.length} parts in ${formatElapsed(totalElapsed)}`;
+  }
+  list.appendChild(summary);
+
+  // Refresh status dots + global preview + reference overlay
+  if (globalDone) {
+    const img = document.getElementById('global-preview');
+    img.style.display = 'block';
+    img.src = `/parts/global_reference.png?t=${Date.now()}`;
+  }
+  completed.forEach(id => {
+    const dot = document.getElementById(`dot-${id}`);
+    if (dot) dot.classList.add('done');
+    const img = document.getElementById(`preview-${id}`);
+    if (img) { img.style.display = 'block'; img.src = `/parts/${id}.png?t=${Date.now()}`; }
+  });
+  refreshRefOverlay();
+  updateParamInfo();
+
+  setTimeout(() => {
+    overlay.classList.remove('active');
+    const h3 = overlay.querySelector('h3');
+    if (h3) h3.textContent = 'Generating...';
+  }, failed ? 6000 : 2500);
+}
+
+function getRemainingParts(pipeline, failedStage, failedPart) {
+  const remaining = [];
+  let found = false;
+  for (const stage of pipeline) {
+    for (const pid of stage.parts) {
+      if (found) {
+        remaining.push(pid === 'global_reference' ? 'Global Reference' : pid);
+      }
+      if (stage.stage === failedStage && pid === failedPart) {
+        found = true;
+      }
+    }
+  }
+  return remaining;
+}
+
+// ── Utilities ──────────────────────────────────────────
+function toggleBody(el) {
+  const body = el.nextElementSibling;
+  const arrow = el.querySelector('.arrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function copyText(id) {
+  const ta = document.getElementById(id);
+  navigator.clipboard.writeText(ta.value);
+  const orig = ta.style.borderColor;
+  ta.style.borderColor = 'var(--success)';
+  setTimeout(() => ta.style.borderColor = orig, 500);
+}
+
+function resetPrompt(id) {
+  const p = PARTS.find(x => x.id === id);
+  if (p) document.getElementById(`ta-${id}`).value = p.positive;
+}
+
+function autoResize(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.max(60, ta.scrollHeight) + 'px';
+}
+
+function createGlobalHint() {
+  // Fallback if hint-global doesn't exist yet
+  const btnRow = document.querySelector('#ta-global')?.closest('.body')?.querySelector('.btn-row');
+  if (!btnRow) return document.body;
+  const span = document.createElement('span');
+  span.className = 'hint';
+  span.id = 'hint-global';
+  btnRow.appendChild(span);
+  return span;
+}
+
+// ── Start ──────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

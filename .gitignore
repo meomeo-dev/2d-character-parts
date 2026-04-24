@@ -1,0 +1,41 @@
+# Generated images
+parts/*.png
+parts/*.jpg
+parts/*.jpeg
+!parts/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+.eggs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Deepseek CLI runtime
+.deepseek-cdp-cli/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.key
+credentials.json

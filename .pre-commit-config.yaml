@@ -1,0 +1,64 @@
+repos:
+  # ── Lint: Python ────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.11
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ── Lint: generic (trailing whitespace, EOF, YAML, JSON) ──
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # ── Secret / credential leak detection ─────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: >-
+          (?x)^(
+            parts/.*\.png|
+            .*\.svg|
+            templates/exploded_view\.svg
+          )$
+
+  # ── Security: Python static analysis ────────────────
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.4
+    hooks:
+      - id: bandit
+        args: ['-ll', '-c', 'pyproject.toml']
+        files: '.*\.py$'
+
+  # ── Type check: Python ──────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.2
+    hooks:
+      - id: mypy
+        args: ['--ignore-missing-imports', '--scripts-are-modules']
+        files: 'scripts/.*\.py$'
+        additional_dependencies: []
+
+  # ── Unit tests ──────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: python3 -m pytest tests/ -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true

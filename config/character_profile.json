@@ -1,0 +1,17 @@
+{
+  "name": "元気少女",
+  "character": {
+    "hair": "silver long hair, side ponytail",
+    "eyes": "purple eyes",
+    "outfit": "sailor school uniform, red bow tie",
+    "pose": "standing A-pose, full body visible, looking at viewer"
+  },
+  "presets": {
+    "quality": "masterpiece, best quality, highres, extremely detailed CG, perfect lighting",
+    "style": "anime style, clean lineart, flat shading, solid flat colors, game character sprite, 2D",
+    "negative": "lowres, bad anatomy, bad hands, text, error, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, out of frame, ugly, deformed, blur, bad proportions, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck",
+    "background": "transparent background, isolated on transparent canvas, no background elements, alpha channel PNG",
+    "ar_global": "9:16",
+    "ar_part": "1:1"
+  }
+}

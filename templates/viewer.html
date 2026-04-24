@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>2D Character Parts — Grid Catalog Viewer</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; background: #f5f5f5; padding: 20px; }
+.container { max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 18px; margin-bottom: 4px; color: #333; }
+.subtitle { font-size: 13px; color: #888; margin-bottom: 16px; }
+.layout { display: flex; gap: 24px; flex-wrap: wrap; }
+#svg-container { flex: 0 0 auto; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); padding: 12px; }
+#svg-container img { display: block; width: 600px; height: 600px; }
+.panel { flex: 1; min-width: 300px; }
+.panel h2 { font-size: 14px; margin: 12px 0 8px; color: #555; }
+.panel h2:first-child { margin-top: 0; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+th { background: #f0f0f0; text-align: left; padding: 6px 8px; font-weight: 600; color: #555; }
+td { padding: 5px 8px; border-top: 1px solid #eee; }
+tr:hover { background: #fafafa; }
+td.id { font-family: monospace; font-size: 11px; color: #888; }
+td.dim { text-align: center; font-family: monospace; font-size: 11px; color: #777; }
+.highlight { background: #fff3cd !important; }
+pre { font-size: 11px; background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow-x: auto; white-space: pre-wrap; line-height: 1.5; max-height: 200px; }
+.btn { font-size: 12px; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+.btn:hover { background: #f0f0f0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>2D Character Parts — Grid Catalog</h1>
+  <p class="subtitle">Parts layout reference · 部件网格目录参考</p>
+
+  <div class="layout">
+    <div id="svg-container">
+      <img src="../templates/exploded_view.svg" alt="Grid Catalog Template" id="svg-viewer">
+    </div>
+
+    <div class="panel">
+      <h2>Part List 部件清单</h2>
+      <table>
+        <thead><tr><th>#</th><th>Name</th><th>ID</th><th>Size</th><th>Group</th></tr></thead>
+        <tbody id="part-table"></tbody>
+      </table>
+
+      <h2>Template Prompt</h2>
+      <pre id="prompt-output"></pre>
+      <button class="btn" onclick="copyPrompt()">Copy</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Layout data inlined (works offline without fetch)
+const LAYOUT_DATA = {
+  "meta": { "canvas_width": 800, "canvas_height": 800 },
+  "groups": [
+    {"id":"body_main","label":"主体 Main Body","parts":[
+      {"id":"head","label":"头部 Head","x":30,"y":40,"w":180,"h":170},
+      {"id":"torso","label":"躯干 Torso","x":230,"y":40,"w":260,"h":340}
+    ]},
+    {"id":"expressions","label":"表情组件 Expressions","parts":[
+      {"id":"expr_happy_eyes","label":"开心眼\\nHappy Eyes","x":530,"y":70,"w":105,"h":55},
+      {"id":"expr_closed_eyes","label":"闭眼\\nClosed Eyes","x":645,"y":70,"w":105,"h":55},
+      {"id":"expr_smile_mouth","label":"微笑嘴\\nSmile Mouth","x":530,"y":140,"w":105,"h":55},
+      {"id":"expr_surprised_mouth","label":"惊讶嘴\\nSurprised Mouth","x":645,"y":140,"w":105,"h":55}
+    ]},
+    {"id":"upper_limbs","label":"上肢 Upper Limbs","parts":[
+      {"id":"upper_arm_L","label":"左上臂\\nL-Upper Arm","x":30,"y":400,"w":90,"h":160},
+      {"id":"upper_arm_R","label":"右上臂\\nR-Upper Arm","x":135,"y":400,"w":90,"h":160},
+      {"id":"forearm_L","label":"左前臂\\nL-Forearm","x":240,"y":400,"w":80,"h":145},
+      {"id":"forearm_R","label":"右前臂\\nR-Forearm","x":335,"y":400,"w":80,"h":145},
+      {"id":"hand_L","label":"左手\\nL-Hand","x":435,"y":400,"w":70,"h":70},
+      {"id":"hand_R","label":"右手\\nR-Hand","x":520,"y":400,"w":70,"h":70}
+    ]},
+    {"id":"lower_limbs","label":"下肢 Lower Limbs","parts":[
+      {"id":"thigh_L","label":"左大腿\\nL-Thigh","x":30,"y":610,"w":95,"h":155},
+      {"id":"thigh_R","label":"右大腿\\nR-Thigh","x":140,"y":610,"w":95,"h":155},
+      {"id":"calf_L","label":"左小腿\\nL-Calf","x":250,"y":610,"w":85,"h":140},
+      {"id":"calf_R","label":"右小腿\\nR-Calf","x":350,"y":610,"w":85,"h":140},
+      {"id":"foot_L","label":"左脚\\nL-Foot","x":455,"y":610,"w":90,"h":35},
+      {"id":"foot_R","label":"右脚\\nR-Foot","x":560,"y":610,"w":90,"h":35}
+    ]}
+  ]
+};
+
+function generatePrompt(config) {
+  const parts = [];
+  for (const g of config.groups) {
+    for (const p of g.parts) {
+      const name = p.label.split('\\n')[0];
+      parts.push({ id: p.id, name: name, w: p.w, h: p.h });
+    }
+  }
+  return (
+    'A clean blank grid catalog for 2D character puppet parts, pure white background,\n' +
+    'thin black line art only. Multiple rectangular frames of different sizes arranged\n' +
+    'in a rectangular grid (NOT forming a human silhouette). Cell sizes proportional to\n' +
+    'real body part dimensions. Each frame has its part name in black text, with light\n' +
+    'dashed diagonal lines. Clean engineering schematic style, no shading. --ar 1:1\n\n' +
+    'Parts:\n' +
+    parts.map(p => `  ${p.id}: ${p.w}\u00d7${p.h} (${p.name})`).join('\n')
+  );
+}
+
+function renderUI() {
+  const config = LAYOUT_DATA;
+  const tbody = document.getElementById('part-table');
+  let idx = 1;
+  for (const g of config.groups) {
+    for (const p of g.parts) {
+      const name = p.label.split('\\n')[0];
+      const en = p.label.split('\\n')[1] || '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${idx++}</td>
+        <td>${name}</td>
+        <td class="id">${p.id}</td>
+        <td class="dim">${p.w}\u00d7${p.h}</td>
+        <td>${g.label.split(' ')[0]}</td>`;
+      tr.addEventListener('click', () => {
+        document.querySelectorAll('tr').forEach(r => r.classList.remove('highlight'));
+        tr.classList.add('highlight');
+      });
+      tbody.appendChild(tr);
+    }
+  }
+  document.getElementById('prompt-output').textContent = generatePrompt(config);
+}
+
+function copyPrompt() {
+  const text = document.getElementById('prompt-output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.btn');
+    btn.textContent = '\u2705 Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+renderUI();
+</script>
+</body>
+</html>
