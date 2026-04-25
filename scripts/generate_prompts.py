@@ -2,13 +2,13 @@
 """
 2D Character Parts — Prompt Generator CLI
 
-Generates 19 comprehensive image prompts (1 global + 18 parts) with
+Generates 20 comprehensive image prompts (1 global + 19 parts) with
 quality presets, negative prompts, and aspect ratios for Stable Diffusion,
 DALL·E, Midjourney, etc.
 
 Usage:
-    python3 scripts/generate_prompts.py                    # All 19, split-screen
-    python3 scripts/generate_prompts.py --batch            # All 19, plain (easiest to copy)
+    python3 scripts/generate_prompts.py                    # All 20, split-screen
+    python3 scripts/generate_prompts.py --batch            # All 20, plain (easiest to copy)
     python3 scripts/generate_prompts.py head               # Single part
     python3 scripts/generate_prompts.py torso              # Single part
     python3 scripts/generate_prompts.py --global           # Global only
@@ -45,6 +45,19 @@ def get_all_parts(config):
     return parts
 
 
+def get_all_parts_sorted(config):
+    """Return parts sorted by pipeline stage (topological order)."""
+    parts = get_all_parts(config)
+    pipeline = config.get("pipeline", [])
+    part_stage = {}
+    for s in pipeline:
+        for pid in s["parts"]:
+            part_stage[pid] = s["stage"]
+    # Sort by stage, then fall back to original order for same-stage parts
+    parts.sort(key=lambda p: part_stage.get(p["id"], 999))
+    return parts
+
+
 def build_positive(parts_list, profile):
     """
     Combine quality preset + style + subject + background.
@@ -70,116 +83,129 @@ def build_part_subject(part, profile):
     c = profile["character"]
     table = {
         "head": [
-            "1girl, head base only for sprite assembly, front view, transparent background",
-            f"{c['hair']}, face contour, nose, ears visible",
-            "blank eye sockets, no eyes, no pupils, no irises, no mouth, no lips, no teeth",
+            "1girl, head base only, no hair, no hair accessories, front view, pure white background (#FFFFFF)",
+            "face contour, nose, ears visible, blank eye sockets",
+            "no eyes, no pupils, no irises, no mouth, no lips, no teeth",
+            "no hair, no bangs, no side hair, no ponytail, no hair ornaments, no hair accessories",
             "completely blank expressionless face, skin tone only in eye area and mouth area",
             "neck base visible at bottom edge for stitching to torso, shoulders cropped out",
-            "this is a base layer — eyes and mouth will be overlaid as separate transparent sprites",
-            "clean transparent canvas everywhere except the head itself",
+            "this is a base layer — eyes, mouth, and hair will be overlaid as separate overlay sprites",
+            "clean white canvas everywhere except the head base itself",
+            "no headwear, no ribbons, no clips, no headbands, bald appearance on scalp",
+        ],
+        "hair": [
+            "1girl, hair only, no face, no body, front view, pure white background (#FFFFFF)",
+            f"{c['hair']}",
+            f"hair accessories: {c.get('hair_accessories', 'none')}",
+            "only hair and hair accessories visible, everything else must be pure white (#FFFFFF)",
+            "NO face, NO skin, NO eyes, NO nose, NO mouth, NO ears, NO neck, NO body",
+            "same framing and dimensions as head base sprite for precise overlay alignment",
+            "hair positioned as if worn on a head, accessories attached to hair",
+            "pure white canvas outside the hair features",
+            "pure white background (#FFFFFF), solid white canvas, no background elements",
         ],
         "torso": [
-            "1girl, torso only, front view, transparent background",
+            "1girl, torso only, front view, pure white background (#FFFFFF)",
             "from shoulders to waist, no head, no neck, no hair",
             f"wearing {c['outfit']}, outfit torso portion only, no sleeves below shoulder",
             "shoulder area is clean cut edge at top, neck hole visible at top center",
             "arms cropped at shoulders, waist is clean cut edge at bottom",
         ],
         "upper_arm_L": [
-            "left upper arm only, from shoulder to elbow, front view, transparent background",
+            "left upper arm only, from shoulder to elbow, front view, pure white background (#FFFFFF)",
             f"wearing {c['outfit']} sleeve",
             "arm resting straight down at side, bare skin at elbow joint bottom edge",
         ],
         "upper_arm_R": [
-            "right upper arm only, from shoulder to elbow, front view, transparent background",
+            "right upper arm only, from shoulder to elbow, front view, pure white background (#FFFFFF)",
             f"wearing {c['outfit']} sleeve",
             "arm resting straight down at side, bare skin at elbow joint bottom edge",
         ],
         "forearm_L": [
-            "left forearm only, from elbow to wrist, front view, transparent background",
+            "left forearm only, from elbow to wrist, front view, pure white background (#FFFFFF)",
             f"wearing {c['outfit']} sleeve rolled up",
             "elbow joint at top edge, wrist at bottom edge",
         ],
         "forearm_R": [
-            "right forearm only, from elbow to wrist, front view, transparent background",
+            "right forearm only, from elbow to wrist, front view, pure white background (#FFFFFF)",
             f"wearing {c['outfit']} sleeve rolled up",
             "elbow joint at top edge, wrist at bottom edge",
         ],
         "hand_L": [
-            "left hand only, open palm facing viewer, front view, transparent background",
+            "left hand only, open palm facing viewer, front view, pure white background (#FFFFFF)",
             "wrist at top edge, fingers extending downward, fingers slightly apart",
             "slender fingers, smooth skin, clean cut at wrist",
         ],
         "hand_R": [
-            "right hand only, open palm facing viewer, front view, transparent background",
+            "right hand only, open palm facing viewer, front view, pure white background (#FFFFFF)",
             "wrist at top edge, fingers extending downward, fingers slightly apart",
             "slender fingers, smooth skin, clean cut at wrist",
         ],
         "thigh_L": [
-            "left thigh only, from hip to above-knee, front view, transparent background",
+            "left thigh only, from hip to above-knee, front view, pure white background (#FFFFFF)",
             "bare skin, upper leg, no skirt, no clothing on leg",
             "hip top is clean cut edge — skirt belongs to torso sprite",
             "knee area is clean cut edge — knee joint belongs to calf sprite",
         ],
         "thigh_R": [
-            "right thigh only, from hip to above-knee, front view, transparent background",
+            "right thigh only, from hip to above-knee, front view, pure white background (#FFFFFF)",
             "bare skin, upper leg, no skirt, no clothing on leg",
             "hip top is clean cut edge — skirt belongs to torso sprite",
             "knee area is clean cut edge — knee joint belongs to calf sprite",
         ],
         "calf_L": [
-            "left calf only, knee joint to ankle, front view, transparent background",
+            "left calf only, knee joint to ankle, front view, pure white background (#FFFFFF)",
             "wearing white knee-high sock covering knee, sock starts at knee joint",
             "sock covers from knee to ankle, skin visible only at very top knee area",
             "shoe not included — foot sprite starts at ankle",
         ],
         "calf_R": [
-            "right calf only, knee joint to ankle, front view, transparent background",
+            "right calf only, knee joint to ankle, front view, pure white background (#FFFFFF)",
             "wearing white knee-high sock covering knee, sock starts at knee joint",
             "sock covers from knee to ankle, skin visible only at very top knee area",
             "shoe not included — foot sprite starts at ankle",
         ],
         "foot_L": [
-            "left foot only, from ankle down, front view, transparent background",
+            "left foot only, from ankle down, front view, pure white background (#FFFFFF)",
             "wearing school loafer shoe, ankle joint at very top edge",
             "sole flat on ground, no calf, no leg above ankle",
         ],
         "foot_R": [
-            "right foot only, from ankle down, front view, transparent background",
+            "right foot only, from ankle down, front view, pure white background (#FFFFFF)",
             "wearing school loafer shoe, ankle joint at very top edge",
             "sole flat on ground, no calf, no leg above ankle",
         ],
         "expr_happy_eyes": [
-            "eye area only, front view, transparent background, expression overlay sprite",
+            "eye area only, front view, pure white background (#FFFFFF), expression overlay sprite",
             f"{c['eyes']}, eyes wide open with sparkle, happy expression eyebrows raised",
-            "ONLY eyes and eyebrows visible — everything else must be fully transparent",
+            "ONLY eyes and eyebrows visible — everything else must be pure white (#FFFFFF)",
             "NO forehead, NO nose bridge, NO face contour, NO hair, NO mouth",
             "same framing as head base sprite for precise overlay alignment",
-            "clean alpha channel, pure transparent canvas outside the eye features",
+            "pure white canvas outside the eye features",
         ],
         "expr_closed_eyes": [
-            "eye area only, front view, transparent background, expression overlay sprite",
+            "eye area only, front view, pure white background (#FFFFFF), expression overlay sprite",
             f"{c['eyes']}, eyes closed in gentle upward curve, relaxed expression",
-            "ONLY eyes and eyebrows visible — everything else must be fully transparent",
+            "ONLY eyes and eyebrows visible — everything else must be pure white (#FFFFFF)",
             "NO forehead, NO nose bridge, NO face contour, NO hair, NO mouth",
             "same framing as head base sprite for precise overlay alignment",
-            "clean alpha channel, pure transparent canvas outside the eye features",
+            "pure white canvas outside the eye features",
         ],
         "expr_smile_mouth": [
-            "mouth and nose area only, front view, transparent background, expression overlay sprite",
+            "mouth and nose area only, front view, pure white background (#FFFFFF), expression overlay sprite",
             "lips curved upward in happy smile, small teeth visible, open smile",
             "nose tip visible for alignment reference, ONLY nose and mouth visible",
             "NO chin, NO face contour, NO eyes, NO eyebrows, NO hair",
             "same framing as head base sprite for precise overlay alignment",
-            "clean alpha channel, pure transparent canvas outside the mouth features",
+            "pure white canvas outside the mouth features",
         ],
         "expr_surprised_mouth": [
-            "mouth and nose area only, front view, transparent background, expression overlay sprite",
+            "mouth and nose area only, front view, pure white background (#FFFFFF), expression overlay sprite",
             "lips parted in small oval shape, slightly open, surprised expression",
             "nose tip visible for alignment reference, ONLY nose and mouth visible",
             "NO chin, NO face contour, NO eyes, NO eyebrows, NO hair",
             "same framing as head base sprite for precise overlay alignment",
-            "clean alpha channel, pure transparent canvas outside the mouth features",
+            "pure white canvas outside the mouth features",
         ],
     }
     return table.get(part["id"], [f"1girl, {part['label_cn']} only"])
@@ -218,9 +244,9 @@ def build_part_exclusions(part_id):
             "shoulders are clean cut edges for sprite stitching",
             "waist is clean cut edge for sprite stitching",
         ],
-        # ── Head (base, NO eyes/mouth — expressions are separate overlays)
+        # ── Head (base, NO eyes/mouth/hair — expressions and hair are separate overlays)
         "head": [
-            # Must NOT contain: eyes, mouth, body, torso, clothing below neck
+            # Must NOT contain: eyes, mouth, hair, body, torso, clothing below neck
             "no eyes",
             "no pupils",
             "no irises",
@@ -240,6 +266,12 @@ def build_part_exclusions(part_id):
             "不含表情",
             "不含微笑",
             "不含眉毛",
+            "no hair",
+            "no bangs",
+            "no hair accessories",
+            "no headwear",
+            "不含头发",
+            "不含发饰",
             "no torso",
             "no body",
             "no shoulders",
@@ -253,6 +285,32 @@ def build_part_exclusions(part_id):
             "neck base is clean cut edge for sprite stitching",
             "no clothing below neck",
             "blank expressionless face, eye and mouth areas intentionally empty",
+        ],
+        # ── Hair (hair + accessories only, transparent overlay)
+        "hair": [
+            "no face",
+            "no skin",
+            "no eyes",
+            "no nose",
+            "no mouth",
+            "no ears",
+            "no neck",
+            "不含脸部",
+            "不含皮肤",
+            "不含眼睛",
+            "不含鼻子",
+            "不含嘴",
+            "不含耳朵",
+            "不含颈部",
+            "no body",
+            "no torso",
+            "no shoulders",
+            "不含身体",
+            "不含躯干",
+            "不含肩部",
+            "only hair strands and hair accessories visible",
+            "white canvas where face and body would be",
+            "sprite overlay designed to be composited on top of head base",
         ],
         # ── Thighs (hip → knee) ─────────────────────────
         "thigh_L": [
@@ -455,7 +513,7 @@ def build_part_exclusions(part_id):
             "不含鼻梁",
             "不含脸型轮廓",
             "不含头发",
-            "only eyes and eyebrows visible, completely transparent elsewhere",
+            "only eyes and eyebrows visible, pure white (#FFFFFF) elsewhere",
             "alpha channel sprite, clean edges for overlay compositing",
         ],
         "expr_closed_eyes": [
@@ -477,7 +535,7 @@ def build_part_exclusions(part_id):
             "不含鼻梁",
             "不含脸型轮廓",
             "不含头发",
-            "only eyes and eyebrows visible, completely transparent elsewhere",
+            "only eyes and eyebrows visible, pure white (#FFFFFF) elsewhere",
             "alpha channel sprite, clean edges for overlay compositing",
         ],
         # ── Expressions: Mouth ───────────────────────────
@@ -499,7 +557,7 @@ def build_part_exclusions(part_id):
             "不含下巴",
             "不含脸型轮廓",
             "不含头发",
-            "only nose tip and mouth visible, completely transparent elsewhere",
+            "only nose tip and mouth visible, pure white (#FFFFFF) elsewhere",
             "alpha channel sprite, clean edges for overlay compositing",
         ],
         "expr_surprised_mouth": [
@@ -519,7 +577,7 @@ def build_part_exclusions(part_id):
             "不含下巴",
             "不含脸型轮廓",
             "不含头发",
-            "only nose tip and mouth visible, completely transparent elsewhere",
+            "only nose tip and mouth visible, pure white (#FFFFFF) elsewhere",
             "alpha channel sprite, clean edges for overlay compositing",
         ],
     }
@@ -543,15 +601,13 @@ def fmt_card(positive, negative, ar, tagline="", width=58):
     # Positive
     pos_label = " POSITIVE "
     lines.append(f"  │{pos_label}{' ' * (width - 2 - len(pos_label))}│")
-    for chunk in _wrap(positive, width - 4):
-        lines.append(f"  │ {chunk:<{width - 4}} │")
+    lines.extend(f"  │ {chunk:<{width - 4}} │" for chunk in _wrap(positive, width - 4))
 
     # Negative
     lines.append(f"  ├{'─' * (width - 2)}┤")
     neg_label = " NEGATIVE "
     lines.append(f"  │{neg_label}{' ' * (width - 2 - len(neg_label))}│")
-    for chunk in _wrap(negative, width - 4):
-        lines.append(f"  │ {chunk:<{width - 4}} │")
+    lines.extend(f"  │ {chunk:<{width - 4}} │" for chunk in _wrap(negative, width - 4))
 
     # AR
     lines.append(f"  ├{'─' * (width - 2)}┤")
@@ -594,7 +650,7 @@ def _wrap(text, width):
 
 
 def output_all(profile, config, batch):
-    parts = get_all_parts(config)
+    parts = get_all_parts_sorted(config)
     p = profile["presets"]
     neg = p["negative"]
 
@@ -610,7 +666,7 @@ def output_all(profile, config, batch):
         print()
     else:
         print(f"\n  {'=' * 58}")
-        print("  1/19  GLOBAL REFERENCE  全局参考图")
+        print("  1/20  GLOBAL REFERENCE  全局参考图")
         print(f"  {'=' * 58}")
         print(fmt_card(positive, neg, p["ar_global"]))
         print()
@@ -620,7 +676,7 @@ def output_all(profile, config, batch):
         label = part["label_cn"]
         if part["label_en"]:
             label += f" / {part['label_en']}"
-        tag = f"{i}/19  [{part['id']}]  {label}  ({part['w']}×{part['h']})"
+        tag = f"{i}/20  [{part['id']}]  {label}  ({part['w']}×{part['h']})"
 
         subject_lines = build_part_subject(part, profile)
         positive = build_positive(subject_lines, profile)
@@ -671,7 +727,7 @@ def output_one(part, profile):
 
 
 def list_parts(config):
-    parts = get_all_parts(config)
+    parts = get_all_parts_sorted(config)
     print(f"\n  {'ID':<22} {'Name':<16} {'Dim':<10} Group")
     print(f"  {'─' * 22} {'─' * 16} {'─' * 10} {'─' * 16}")
     for p in parts:

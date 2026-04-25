@@ -210,7 +210,7 @@ def generate(
     # Decode and save
     if output and img_url.startswith("data:"):
         # data:image/png;base64,<data>
-        header, b64data = img_url.split(",", 1)
+        _header, b64data = img_url.split(",", 1)
         img_bytes = base64.b64decode(b64data)
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         with open(output, "wb") as f:

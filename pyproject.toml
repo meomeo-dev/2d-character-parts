@@ -1,21 +1,61 @@
 [tool.ruff]
 line-length = 120
-target-version = "py38"
+target-version = "py312"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "venv",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+select = [
+    "E", "W",     # pycodestyle errors & warnings
+    "F",          # Pyflakes (unused imports, undefined names)
+    "I",          # isort (import ordering)
+    "UP",         # pyupgrade (modern syntax upgrades)
+    "B",          # flake8-bugbear (common bug patterns)
+    "C4",         # flake8-comprehensions (comprehension optimization)
+    "SIM",        # flake8-simplify (code simplification)
+    "RUF",        # Ruff-specific rules
+    "PERF",       # performance tips
+    "PTH",        # flake8-use-pathlib (enforce pathlib)
+]
+ignore = [
+    "E501",       # line-too-long — formatter handles it
+    "E741",       # ambiguous variable name (i, j, l) — acceptable in loops
+    "RUF001",     # ambiguous unicode × — intentional dimension separator
+    "RUF002",     # ambiguous unicode α — intentional math notation in docstrings
+    "RUF003",     # ambiguous unicode α in comments — intentional math notation
+]
+
+# Auto-fix all fixable issues on --fix
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "PLR2004",    # magic values are fine in tests
+    "S101",       # assert is fine in tests
+    "PERF401",    # list comprehension in tests is fine
+]
+"scripts/**/*.py" = [
+    "E402",       # module level import not at top (sys.path setup)
+    "PTH123",     # open() is idiomatic for CLI script file I/O
+]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+docstring-code-format = true
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
 skips = ["B101", "B310"]  # B310: urlopen is legitimate for API clients
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 ignore_missing_imports = true
 scripts_are_modules = true
 

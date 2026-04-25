@@ -28,7 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from generate_prompts import (  # noqa: E402
+from generate_prompts import (
     build_global_subject,
     build_part_exclusions,
     build_part_subject,
@@ -36,6 +36,7 @@ from generate_prompts import (  # noqa: E402
     get_all_parts,
     load_json,
 )
+from matting import triangulation_matting
 
 # ── Globals set from CLI args ──────────────────────────
 API_KEY = ""
@@ -44,6 +45,23 @@ MODEL = "google/gemini-3.1-flash-image-preview"
 
 SILICONFLOW_API = "https://api.siliconflow.cn/v1/images/generations"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
+
+# ── Helpers ─────────────────────────────────────────────
+
+
+def _save_binary(output_path, data):
+    """Save binary data to a Path, creating parent directories as needed."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(data)
+
+
+def _download_to_path(url, output_path, timeout=60):
+    """Download a URL and save to a Path."""
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        _save_binary(output_path, resp.read())
+
 
 # ── OpenRouter model classification ────────────────────
 NATIVE_KEYWORDS = ["seedream", "flux", "janus"]
@@ -211,6 +229,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/generate":
             self._handle_generate()
+        elif parsed.path == "/api/matting":
+            self._handle_matting()
         elif parsed.path == "/api/prompts":
             self._send_prompts_post()
         elif parsed.path == "/api/settings":
@@ -239,15 +259,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         parts_dir.mkdir(exist_ok=True)
         existing = {f.stem for f in parts_dir.glob("*.png")}
         parts = get_all_parts(config)
-        result = []
-        for p in parts:
-            result.append(
-                {
-                    "id": p["id"],
-                    "label_cn": p["label_cn"],
-                    "generated": p["id"] in existing,
-                }
-            )
+        result = [{"id": p["id"], "label_cn": p["label_cn"], "generated": p["id"] in existing} for p in parts]
         self._json_response(result)
 
     def _send_models(self):
@@ -279,15 +291,14 @@ class StudioHandler(SimpleHTTPRequestHandler):
             try:
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read())
-                    models = []
-                    for m in data.get("data", []):
-                        models.append(
-                            {
-                                "id": m.get("id", ""),
-                                "name": m.get("name", m.get("id", "")),
-                                "description": m.get("description", ""),
-                            }
-                        )
+                    models = [
+                        {
+                            "id": m.get("id", ""),
+                            "name": m.get("name", m.get("id", "")),
+                            "description": m.get("description", ""),
+                        }
+                        for m in data.get("data", [])
+                    ]
                     self._json_response({"models": models})
             except Exception as e:
                 self._json_response(
@@ -365,6 +376,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     "model": sm,
                 }
             )
+
+        part_prompts.sort(key=lambda p: p["stage"])
 
         return {
             "backend": BACKEND,
@@ -549,6 +562,180 @@ class StudioHandler(SimpleHTTPRequestHandler):
         else:
             self._generate_siliconflow(part_id, positive, negative, image_size, seed, ref_images, gen_model)
 
+    def _handle_matting(self):
+        """POST /api/matting — run triangulation matting to produce transparent PNG."""
+        if not API_KEY:
+            self._json_response({"error": "API_KEY not set."}, 400)
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length)
+        try:
+            req = json.loads(raw)
+        except json.JSONDecodeError:
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        part_id = req.get("part_id", "")
+        if not part_id:
+            self._json_response({"error": "Missing 'part_id'"}, 400)
+            return
+
+        parts_dir = PROJECT_DIR / "parts"
+        parts_dir.mkdir(exist_ok=True)
+
+        white_path = parts_dir / f"{part_id}_white.png"
+        black_path = parts_dir / f"{part_id}_black.png"
+        current_path = parts_dir / f"{part_id}.png"
+
+        if not current_path.exists():
+            self._json_response({"error": f"Part '{part_id}' not generated yet. Generate it first."}, 400)
+            return
+
+        import shutil
+        import time
+
+        start_time = time.time()
+
+        # Step 1: Preserve white-bg version
+        try:
+            shutil.copy2(current_path, white_path)
+        except OSError as e:
+            self._json_response({"error": f"Failed to copy white image: {e}"}, 500)
+            return
+
+        # Step 2: Read white image dimensions to match in black-bg generation
+        try:
+            from PIL import Image as PILImage
+
+            white_img = PILImage.open(white_path)
+            w, h = white_img.size
+            white_img.close()
+            # Map dimensions to aspect_ratio and image_size_or for the API
+            ratio = w / h
+            if 0.55 < ratio < 0.58:
+                aspect_ratio = "9:16"
+            elif 0.65 < ratio < 0.68:
+                aspect_ratio = "2:3"
+            elif 0.74 < ratio < 0.76:
+                aspect_ratio = "3:4"
+            elif 0.98 < ratio < 1.02:
+                aspect_ratio = "1:1"
+            elif 1.32 < ratio < 1.35:
+                aspect_ratio = "4:3"
+            elif 1.76 < ratio < 1.80:
+                aspect_ratio = "16:9"
+            else:
+                aspect_ratio = "1:1"
+            min_dim = min(w, h)
+            if min_dim >= 3000:
+                image_size_or = "4K"
+            elif min_dim >= 1500:
+                image_size_or = "2K"
+            else:
+                image_size_or = "1K"
+        except Exception:
+            aspect_ratio = "1:1"
+            image_size_or = "1K"
+
+        # Step 3: Generate black-background version via image editing
+        black_prompt = (
+            "Change ONLY the background to pure black (#000000). "
+            "Keep every pixel of the character and subject exactly the same — no changes to the foreground. "
+            "Do not alter any pixel of the subject. This is a constrained edit for matting: "
+            "the background must become solid black while the subject remains pixel-perfect."
+        )
+        try:
+            self._generate_image_via_openrouter(
+                prompt=black_prompt,
+                negative="blurry, distorted, altered subject, changed character, different proportions",
+                aspect_ratio=aspect_ratio,
+                image_size_or=image_size_or,
+                ref_images=[f"/parts/{part_id}_white.png"],
+                output_path=black_path,
+                model=DAG_REF_MODEL,
+            )
+        except Exception as e:
+            # Clean up white image on failure
+            if white_path.exists():
+                white_path.unlink()
+            self._json_response({"error": f"Black-background generation failed: {e}"}, 502)
+            return
+
+        # Step 4: Run triangulation matting
+        ok = triangulation_matting(str(white_path), str(black_path), str(current_path))
+        if not ok:
+            self._json_response({"error": "Matting algorithm failed — check Pillow installation."}, 500)
+            return
+
+        elapsed_ms = int((time.time() - start_time) * 1000)
+
+        self._json_response(
+            {
+                "part_id": part_id,
+                "white_url": f"/parts/{part_id}_white.png",
+                "black_url": f"/parts/{part_id}_black.png",
+                "transparent_url": f"/parts/{part_id}.png",
+                "timing_ms": elapsed_ms,
+            }
+        )
+
+    def _generate_image_via_openrouter(
+        self, prompt, negative, aspect_ratio, image_size_or, ref_images, output_path, model
+    ):
+        """Generate a single image and save to disk. Raises on failure."""
+        body = build_openrouter_body(
+            prompt,
+            negative,
+            "1328x1328",
+            None,
+            ref_images,
+            model,
+            aspect_ratio=aspect_ratio,
+            image_size_or=image_size_or,
+        )
+        data = json.dumps(body).encode("utf-8")
+        sreq = urllib.request.Request(OPENROUTER_API, data=data, method="POST")
+        sreq.add_header("Authorization", f"Bearer {API_KEY}")
+        sreq.add_header("Content-Type", "application/json")
+
+        try:
+            with urllib.request.urlopen(sreq, timeout=300) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()
+            raise RuntimeError(f"OpenRouter HTTP {e.code}: {err_body}") from e
+        except TimeoutError:
+            raise RuntimeError("Generation timed out after 300s.") from None
+
+        choices = result.get("choices", [])
+        if not choices:
+            raise RuntimeError(f"No choices in response: {json.dumps(result, ensure_ascii=False)[:500]}")
+
+        msg = choices[0].get("message", {})
+        images = msg.get("images", [])
+        if not images:
+            text = msg.get("content", "")[:200]
+            raise RuntimeError(f"No image in response. Text: {text}")
+
+        img_data_url = images[0].get("image_url", {}).get("url", "")
+        if not img_data_url:
+            raise RuntimeError("No image_url in response")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if img_data_url.startswith("data:"):
+                _, b64data = img_data_url.split(",", 1)
+                img_bytes = base64.b64decode(b64data)
+                with output_path.open("wb") as f:
+                    f.write(img_bytes)
+            else:
+                dreq = urllib.request.Request(img_data_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(dreq, timeout=60) as dl, open(output_path, "wb") as f:
+                    f.write(dl.read())
+        except Exception as e:
+            raise RuntimeError(f"Failed to save image: {e}") from e
+
     def _generate_openrouter(
         self,
         part_id,
@@ -611,9 +798,9 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
         try:
             if img_data_url.startswith("data:"):
-                header, b64data = img_data_url.split(",", 1)
+                _header, b64data = img_data_url.split(",", 1)
                 img_bytes = base64.b64decode(b64data)
-                with open(output_path, "wb") as f:
+                with output_path.open("wb") as f:
                     f.write(img_bytes)
             else:
                 # HTTP URL fallback

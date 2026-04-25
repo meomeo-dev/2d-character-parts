@@ -261,6 +261,7 @@ let GLOBAL_PROMPT = null;
 let LAYOUT_CONFIG = null;
 let GUI_PANEL = null;  // lil-gui instance
 let GENERATED = new Set();  // part_ids that have been generated
+let MATTED = new Set();     // part_ids that have been matted (transparent bg)
 let BACKEND = 'openrouter';
 const SVG_VB = { w: 800, h: 800 };
 
@@ -278,7 +279,7 @@ const CHAIN_ORDER = [
   // Expressions follow list order
   ['expr_happy_eyes', 'expr_closed_eyes', 'expr_smile_mouth', 'expr_surprised_mouth'],
   // Standalone
-  ['head'], ['torso'], ['global_reference'],
+  ['head'], ['hair'], ['torso'], ['global_reference'],
 ];
 
 function resolveDeps(partId, pipeline) {
@@ -447,12 +448,13 @@ let SETTINGS = {
   root_model: 'bytedance-seed/seedream-4.5',
   ref_model: 'google/gemini-3.1-flash-image-preview',
   character_hair: 'silver long hair, side ponytail',
+  character_hair_accessories: 'red ribbon hair tie, small white flower clip',
   character_eyes: 'purple eyes',
   character_outfit: 'sailor school uniform, red bow tie',
   character_pose: 'standing A-pose, full body visible, looking at viewer, slight smile',
   preset_quality: 'masterpiece, best quality, highres, extremely detailed CG, perfect lighting',
   preset_style: 'anime style, clean lineart, flat shading, solid flat colors, game character sprite, 2D',
-  preset_background: 'simple white background, plain background, no shadow',
+  preset_background: 'pure white background (#FFFFFF), solid white canvas, no background elements, PNG format',
   preset_negative: 'lowres, bad anatomy, bad hands, text, error, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, out of frame, ugly, deformed, blur, bad proportions, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck',
   image_root_ar: '9:16',
   image_root_size: '2K',
@@ -543,6 +545,7 @@ async function applyProfileSettings() {
     const profile = {
       character: {
         hair: SETTINGS.character_hair,
+        hair_accessories: SETTINGS.character_hair_accessories,
         eyes: SETTINGS.character_eyes,
         outfit: SETTINGS.character_outfit,
         pose: SETTINGS.character_pose,
@@ -633,6 +636,7 @@ function initControlPanel() {
   // ── Character Profile ─────────────────────────────────
   const f3 = gui.addFolder('Character Profile');
   f3.add(SETTINGS, 'character_hair').name('Hair').onFinishChange(saveSettings);
+  f3.add(SETTINGS, 'character_hair_accessories').name('Hair Accessories').onFinishChange(saveSettings);
   f3.add(SETTINGS, 'character_eyes').name('Eyes').onFinishChange(saveSettings);
   f3.add(SETTINGS, 'character_outfit').name('Outfit').onFinishChange(saveSettings);
   f3.add(SETTINGS, 'character_pose').name('Pose').onFinishChange(saveSettings);
@@ -736,7 +740,7 @@ function render() {
     const num = i + 1;
     card.innerHTML = `
       <div class="header-row" onclick="toggleBody(this)">
-        <span class="num">${num}/18</span>
+        <span class="num">${num}/19</span>
         <span class="label">${p.label_cn}</span>
         <span class="dim">${p.id} · ${p.w}×${p.h}</span>
         <span class="status-dot" id="dot-${p.id}"></span>
@@ -754,6 +758,7 @@ function render() {
         </div>
         <div class="btn-row">
           <button class="primary sm" onclick="generatePart('${p.id}')">🔄 Generate</button>
+          <button class="sm" id="btn-matting-${p.id}" onclick="mattingPart('${p.id}')" disabled>🧹 Matting</button>
           <button class="sm" onclick="copyText('ta-${p.id}')">📋 Copy</button>
           <button class="sm" onclick="resetPrompt('${p.id}')">↺ Reset</button>
           <span class="hint" id="hint-${p.id}"></span>
@@ -769,6 +774,16 @@ function render() {
         const img = document.getElementById(`preview-${p.id}`);
         img.style.display = 'block';
         img.src = `/parts/${p.id}.png?t=${Date.now()}`;
+        // Enable matting button
+        const mBtn = document.getElementById(`btn-matting-${p.id}`);
+        if (mBtn) mBtn.disabled = false;
+        // Detect if already matted
+        fetch(`/parts/${p.id}_white.png`).then(r2 => {
+          if (r2.ok) {
+            MATTED.add(p.id);
+            if (mBtn) mBtn.textContent = '✓ Matted';
+          }
+        }).catch(() => {});
       }
     });
   });
@@ -777,7 +792,7 @@ function render() {
   const bar = document.createElement('div');
   bar.className = 'batch-bar';
   bar.innerHTML = `
-    <button class="primary" onclick="batchGenerate()">⚡ Generate All 18</button>
+    <button class="primary" onclick="batchGenerate()">⚡ Generate All 19</button>
     <span class="hint">Will generate parts one by one</span>`;
   canvas.appendChild(bar);
 }
@@ -903,10 +918,14 @@ async function generatePart(id) {
     pushLog(id, data.prompt || ta.value, data.ref_meta || [], genModel || '?', 'ok', data.timing_ms, data.seed);
 
     GENERATED.add(id);
+    MATTED.delete(id);  // new generation replaces matted version
     document.getElementById(`dot-${id}`).classList.add('done');
     const img = document.getElementById(`preview-${id}`);
     img.style.display = 'block';
     img.src = `/parts/${id}.png?t=${Date.now()}`;
+    // Enable matting button
+    const mBtn = document.getElementById(`btn-matting-${id}`);
+    if (mBtn) { mBtn.disabled = false; mBtn.textContent = '🧹 Matting'; }
     refreshRefOverlay();
     updateParamInfo();
   } catch (e) {
@@ -924,6 +943,78 @@ function cancelGeneration() {
   if (activeController) {
     activeController.abort();
     activeController = null;
+  }
+}
+
+async function mattingPart(id) {
+  const btn = document.getElementById(`btn-matting-${id}`);
+  const hint = document.getElementById(`hint-${id}`);
+  if (!btn || !hint) return;
+
+  // Check part is generated
+  await refreshGenerated();
+  if (!GENERATED.has(id)) {
+    hint.textContent = '✗ Generate the part first';
+    hint.style.color = '#e74c3c';
+    setTimeout(() => { hint.style.color = ''; }, 3000);
+    return;
+  }
+
+  if (activeController) activeController.abort();
+  activeController = new AbortController();
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Matting...';
+  hint.innerHTML = '<span class="spinner"></span> matting...';
+  hint.style.color = '';
+
+  const startTime = Date.now();
+  let timer = setInterval(() => {
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    hint.innerHTML = `<span class="spinner"></span> matting... ${elapsed}s`;
+  }, 1000);
+
+  try {
+    const resp = await fetch('/api/matting', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({part_id: id}),
+      signal: activeController.signal,
+    });
+    clearInterval(timer);
+    const data = await resp.json();
+    if (data.error) {
+      hint.textContent = `✗ ${data.error}`;
+      hint.style.color = '#e74c3c';
+      btn.disabled = false;
+      btn.textContent = '🧹 Matting';
+      pushLog(id, '', [], '?', 'err', 0, null);
+      return;
+    }
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    hint.innerHTML = `✓ matted · ${data.timing_ms || '?'}ms · ${elapsed}s`;
+    hint.style.color = '';
+    MATTED.add(id);
+    btn.textContent = '✓ Matted';
+
+    // Update preview to transparent version
+    const img = document.getElementById(`preview-${id}`);
+    if (img) {
+      img.style.display = 'block';
+      img.src = `/parts/${id}.png?t=${Date.now()}`;
+    }
+    refreshRefOverlay();
+    pushLog(id, 'matting → transparent', [], 'gemini-edit', 'ok', data.timing_ms, null);
+  } catch (e) {
+    clearInterval(timer);
+    if (e.name === 'AbortError') {
+      hint.textContent = '⚠ cancelled';
+    } else {
+      hint.textContent = `✗ ${e.message || 'Network error'}`;
+    }
+    hint.style.color = '#e74c3c';
+    btn.disabled = false;
+    btn.textContent = '🧹 Matting';
   }
 }
 
@@ -1115,6 +1206,9 @@ async function batchGenerate() {
     if (dot) dot.classList.add('done');
     const img = document.getElementById(`preview-${id}`);
     if (img) { img.style.display = 'block'; img.src = `/parts/${id}.png?t=${Date.now()}`; }
+    MATTED.delete(id);  // new generation replaces matted version
+    const mBtn = document.getElementById(`btn-matting-${id}`);
+    if (mBtn) { mBtn.disabled = false; mBtn.textContent = '🧹 Matting'; }
   });
   refreshRefOverlay();
   updateParamInfo();

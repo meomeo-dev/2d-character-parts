@@ -3,7 +3,7 @@
     "name": "2D Character Parts — Grid Catalog Layout",
     "canvas_width": 800,
     "canvas_height": 800,
-    "version": "1.3"
+    "version": "1.4"
   },
   "global_ref_slot": { "x": 540, "y": 220, "w": 210, "h": 140, "label": "Global Reference 全局参考 (9:16)" },
   "pipeline": [
@@ -26,8 +26,12 @@
     { "stage": 4, "name": "head",        "label": "头部",
       "parts": ["head"],
       "depends_on": ["torso"],
-      "context": "头部大小需与躯干比例协调 (约1:7头身)。发型/瞳色与全局图一致。" },
-    { "stage": 5, "name": "expressions", "label": "表情 (基于头部)",
+      "context": "头部大小需与躯干比例协调 (约1:7头身)。不含头发和发饰，仅保留面部轮廓、鼻子、耳朵、空白眼窝。" },
+    { "stage": 5, "name": "hair",        "label": "发型与发饰",
+      "parts": ["hair"],
+      "depends_on": ["head"],
+      "context": "发型和发饰需与头部轮廓对齐。参考头部大小和位置，发型完整覆盖头顶区域。透明背景便于叠加。" },
+    { "stage": 6, "name": "expressions", "label": "表情 (基于头部)",
       "parts": ["expr_happy_eyes", "expr_closed_eyes", "expr_smile_mouth", "expr_surprised_mouth"],
       "depends_on": ["head"],
       "context": "眼睛/嘴部需与头部脸型、五官位置对齐。瞳色与head阶段一致，表情夸张度适中。" }
@@ -38,6 +42,7 @@
       "label": "主体 Main Body",
       "parts": [
         { "id": "head", "label": "头部 Head", "x": 30, "y": 40, "w": 180, "h": 170 },
+        { "id": "hair", "label": "发型\nHair", "x": 30, "y": 215, "w": 180, "h": 170 },
         { "id": "torso", "label": "躯干 Torso", "x": 230, "y": 40, "w": 260, "h": 340 }
       ]
     },
@@ -55,24 +60,24 @@
       "id": "upper_limbs",
       "label": "上肢 Upper Limbs",
       "parts": [
-        { "id": "upper_arm_L", "label": "左上臂\nL-Upper Arm", "x": 30, "y": 400, "w": 90, "h": 160 },
-        { "id": "upper_arm_R", "label": "右上臂\nR-Upper Arm", "x": 135, "y": 400, "w": 90, "h": 160 },
-        { "id": "forearm_L", "label": "左前臂\nL-Forearm", "x": 240, "y": 400, "w": 80, "h": 145 },
-        { "id": "forearm_R", "label": "右前臂\nR-Forearm", "x": 335, "y": 400, "w": 80, "h": 145 },
-        { "id": "hand_L", "label": "左手\nL-Hand", "x": 435, "y": 400, "w": 70, "h": 70 },
-        { "id": "hand_R", "label": "右手\nR-Hand", "x": 520, "y": 400, "w": 70, "h": 70 }
+        { "id": "upper_arm_L", "label": "左上臂\nL-Upper Arm", "x": 30, "y": 430, "w": 90, "h": 160 },
+        { "id": "upper_arm_R", "label": "右上臂\nR-Upper Arm", "x": 135, "y": 430, "w": 90, "h": 160 },
+        { "id": "forearm_L", "label": "左前臂\nL-Forearm", "x": 240, "y": 430, "w": 80, "h": 145 },
+        { "id": "forearm_R", "label": "右前臂\nR-Forearm", "x": 335, "y": 430, "w": 80, "h": 145 },
+        { "id": "hand_L", "label": "左手\nL-Hand", "x": 435, "y": 430, "w": 70, "h": 70 },
+        { "id": "hand_R", "label": "右手\nR-Hand", "x": 520, "y": 430, "w": 70, "h": 70 }
       ]
     },
     {
       "id": "lower_limbs",
       "label": "下肢 Lower Limbs",
       "parts": [
-        { "id": "thigh_L", "label": "左大腿\nL-Thigh", "x": 30, "y": 610, "w": 95, "h": 155 },
-        { "id": "thigh_R", "label": "右大腿\nR-Thigh", "x": 140, "y": 610, "w": 95, "h": 155 },
-        { "id": "calf_L", "label": "左小腿\nL-Calf", "x": 250, "y": 610, "w": 85, "h": 140 },
-        { "id": "calf_R", "label": "右小腿\nR-Calf", "x": 350, "y": 610, "w": 85, "h": 140 },
-        { "id": "foot_L", "label": "左脚\nL-Foot", "x": 455, "y": 610, "w": 90, "h": 35 },
-        { "id": "foot_R", "label": "右脚\nR-Foot", "x": 560, "y": 610, "w": 90, "h": 35 }
+        { "id": "thigh_L", "label": "左大腿\nL-Thigh", "x": 30, "y": 640, "w": 95, "h": 155 },
+        { "id": "thigh_R", "label": "右大腿\nR-Thigh", "x": 140, "y": 640, "w": 95, "h": 155 },
+        { "id": "calf_L", "label": "左小腿\nL-Calf", "x": 250, "y": 640, "w": 85, "h": 140 },
+        { "id": "calf_R", "label": "右小腿\nR-Calf", "x": 350, "y": 640, "w": 85, "h": 140 },
+        { "id": "foot_L", "label": "左脚\nL-Foot", "x": 455, "y": 640, "w": 90, "h": 35 },
+        { "id": "foot_R", "label": "右脚\nR-Foot", "x": 560, "y": 640, "w": 90, "h": 35 }
       ]
     }
   ]

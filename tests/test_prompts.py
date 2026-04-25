@@ -34,7 +34,7 @@ def test_load_json():
 
 def test_all_parts_present():
     _, _, parts = get_fixtures()
-    assert len(parts) == 18, f"Expected 18 parts, got {len(parts)}"
+    assert len(parts) == 19, f"Expected 19 parts, got {len(parts)}"
 
 
 def test_every_part_has_subject():
@@ -60,35 +60,35 @@ def test_global_subject_has_view_angle():
     assert "45-degree" in pos or "side view" in pos, "Global missing 45-degree view angle"
 
 
-def test_parts_have_front_view_and_transparent():
+def test_parts_have_front_view_and_white_background():
     _, profile, parts = get_fixtures()
     for p in parts:
         subj = build_part_subject(p, profile)
         pos = build_positive(subj, profile)
         assert "front view" in pos.lower(), f"{p['id']} missing 'front view'"
-        assert "transparent" in pos.lower(), f"{p['id']} missing 'transparent'"
+        assert "white background" in pos.lower(), f"{p['id']} missing 'white background'"
 
 
 def test_head_has_blank_face():
     _, profile, parts = get_fixtures()
-    head = [p for p in parts if p["id"] == "head"][0]
+    head = next(p for p in parts if p["id"] == "head")
     pos = build_positive(build_part_subject(head, profile), profile)
     assert "no eyes" in pos.lower() or "blank" in pos.lower()
 
 
-def test_expression_sprites_are_transparent_overlays():
+def test_expression_sprites_are_overlays_on_white():
     _, profile, parts = get_fixtures()
     for pid in ["expr_happy_eyes", "expr_closed_eyes", "expr_smile_mouth", "expr_surprised_mouth"]:
-        p = [x for x in parts if x["id"] == pid][0]
+        p = next(x for x in parts if x["id"] == pid)
         subj = build_part_subject(p, profile)
         pos = ", ".join(subj).lower()
-        assert "transparent" in pos, f"{pid} missing 'transparent'"
+        assert "white background" in pos, f"{pid} missing 'white background'"
         assert "overlay" in pos, f"{pid} missing 'overlay'"
 
 
 def test_part_exclusion_chains():
     """Verify adjacent limb parts exclude each other."""
-    _, _, parts = get_fixtures()
+    _, _, _parts = get_fixtures()
 
     # Upper arm must exclude forearm and hand
     for pid in ["upper_arm_L", "upper_arm_R"]:
