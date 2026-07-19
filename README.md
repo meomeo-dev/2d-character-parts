@@ -34,23 +34,33 @@
 
 ## 快速开始
 
-### 方式 A：Studio Web UI（推荐）
+### 方式 A：Studio Web UI（推荐，Node / AI SDK 后端）
+
+后端已迁移到 **Node + [AI SDK v7](https://sdk.vercel.ai)**（hono 服务）：chat 与图像生成统一走 ai-sdk（`@ai-sdk/openai-compatible`），prompt 生成 / 抠图 / 合成 / GIF 由 sharp + gifenc 实现。
 
 ```bash
-# 1. 设置 API Key
-export OPENROUTER_API_KEY=sk-or-xxx
+# 1. 安装依赖（首次；含 sharp 原生二进制）
+npm install
 
-# 2. 启动 Studio
-python3 scripts/studio.py
+# 2. 启动 Studio（默认 127.0.0.1:8765）
+npm start                 # = tsx server/index.ts
+PORT=8080 npm start       # 自定义端口
 # → 浏览器打开 http://localhost:8765
 
-# 3. 在 Studio 中操作：
-#    - 左侧参考模板显示部件布局
-#    - 右侧 Canvas 显示每个部件的 prompt
-#    - ⚙ Settings 面板调整模型/角色设定/图片参数（自动保存到 localStorage）
-#    - "Generate" 逐个生成，"Generate All" DAG 管线批量生成
-#    - 📋 Call Log 面板查看每次调用的 prompt、参考图、seed
+# 3. 在 ⚙ Settings → 🔌 Providers 里配置（无需环境变量，持久化到 config/runtime_settings.json）：
+#    - LLM：Base URL / API Key / Model（provider→model 二级选择，点"⟳ 拉取模型"）
+#    - Image：图像生成 base_url / key / model（gpt-image 等）
+#    - Jina：向量记忆 embed + 联网搜索/抓取的 key
+#    也可用环境变量：AI_GATEWAY_API_KEY / OPENAI_API_KEY / JINA_API_KEY
 ```
+
+> **模型说明**：LLM Base URL 只需填代理根（如 `https://ai-gateway.vercel.sh/v1`）；
+> ai-sdk 会自行拼 `/chat/completions`、`/images/generations`。模型列举独立处理
+> （自动尝试 `/models` 与 `/v1/models`），无 key 也能列出开放网关的模型。
+
+开发命令：`npm run typecheck`（tsc strict）、`npm test`（node --test，65 用例）。
+
+> **Legacy**：`scripts/*.py`（原 `python3 scripts/studio.py`）暂作行为参照 / fallback 保留，不再是主入口。
 
 ### 方式 B：命令行批量生成
 
