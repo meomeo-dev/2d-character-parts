@@ -4,6 +4,9 @@ parts/*.jpg
 parts/*.jpeg
 !parts/.gitkeep
 
+# Node
+node_modules/
+
 # Python
 __pycache__/
 *.pyc
