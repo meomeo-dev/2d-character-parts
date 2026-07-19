@@ -19,6 +19,7 @@ import importlib
 import json
 import os
 import sys
+import time
 import urllib.request
 from collections.abc import Callable
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -30,6 +31,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import image_openai
+import providers
+from _http import HttpError
 from generate_prompts import (
     build_global_subject,
     build_part_exclusions,
@@ -42,7 +46,7 @@ from matting import triangulation_matting
 
 # ── Globals set from CLI args ──────────────────────────
 API_KEY = ""
-BACKEND = "openrouter"  # "openrouter" | "siliconflow"
+BACKEND = "openai"  # "openai" | "openrouter" | "siliconflow"
 MODEL = "google/gemini-3.1-flash-image-preview"
 
 SILICONFLOW_API = "https://api.siliconflow.cn/v1/images/generations"
@@ -226,6 +230,77 @@ def build_siliconflow_body(positive, negative, image_size, seed, ref_images, mod
     return body
 
 
+# ── OpenAI (gpt-image) backend helpers ──────────────────
+_OPENAI_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
+
+
+def is_openai_image_model(model):
+    """True if ``model`` looks like an OpenAI image model (gpt-image / dall-e)."""
+    if not isinstance(model, str):
+        return False
+    lower = model.lower()
+    return "gpt-image" in lower or lower.startswith("dall-e")
+
+
+def to_openai_size(image_size, aspect_ratio=None):
+    """Map a frontend size / aspect ratio to a valid gpt-image ``size``.
+
+    Accepts an explicit gpt-image size ("1024x1024"/"auto"), an aspect-ratio
+    string ("9:16"), or a "WxH" dimension string, and collapses each to the
+    nearest supported value. Falls back to "auto" when the ratio is unknown.
+    """
+    if isinstance(image_size, str) and image_size in _OPENAI_SIZES:
+        return image_size
+
+    ratio = None
+    if isinstance(aspect_ratio, str) and ":" in aspect_ratio:
+        ratio = _ratio_from_pair(aspect_ratio, ":")
+    if ratio is None and isinstance(image_size, str) and "x" in image_size.lower():
+        ratio = _ratio_from_pair(image_size.lower(), "x")
+
+    if ratio is None:
+        return "auto"
+    if ratio > 1.1:
+        return "1536x1024"
+    if ratio < 0.9:
+        return "1024x1536"
+    return "1024x1024"
+
+
+def _ratio_from_pair(text, sep):
+    """Parse ``"<w><sep><h>"`` into ``w / h`` or None when malformed."""
+    try:
+        w_str, h_str = text.split(sep)
+        w, h = float(w_str), float(h_str)
+    except (ValueError, ZeroDivisionError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return w / h
+
+
+def resolve_openai_refs(ref_images):
+    """Turn studio ref entries into inputs for ``image_openai.edit``.
+
+    ``/parts/*.png`` paths become absolute filesystem paths (only if the file
+    exists) and ``data:`` URLs are decoded to raw bytes. Anything else is skipped.
+    """
+    inputs: list[str | bytes] = []
+    for ref in ref_images or []:
+        if not isinstance(ref, str):
+            continue
+        if ref.startswith("/parts/") or "parts/" in ref:
+            local_path = PROJECT_DIR / ref.lstrip("/")
+            if local_path.exists():
+                inputs.append(str(local_path))
+        elif ref.startswith("data:"):
+            try:
+                inputs.append(base64.b64decode(ref.split(",", 1)[1]))
+            except (ValueError, IndexError):
+                continue
+    return inputs
+
+
 class StudioHandler(SimpleHTTPRequestHandler):
     """HTTP handler that routes API calls and serves static files."""
 
@@ -302,7 +377,19 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
     def _send_models(self):
         """Return the model strategy info for the current backend."""
-        if BACKEND == "openrouter":
+        if BACKEND == "openai":
+            image_cfg = providers.get_image()
+            oa_model = MODEL if is_openai_image_model(MODEL) else image_cfg.get("model") or image_openai.DEFAULT_MODEL
+            base_url = image_cfg.get("base_url") or image_openai.DEFAULT_BASE_URL
+            self._json_response(
+                {
+                    "backend": "openai",
+                    "root_model": oa_model,
+                    "ref_model": oa_model,
+                    "api_endpoint": f"{base_url.rstrip('/')}/images/generations",
+                }
+            )
+        elif BACKEND == "openrouter":
             self._json_response(
                 {
                     "backend": "openrouter",
@@ -322,8 +409,19 @@ class StudioHandler(SimpleHTTPRequestHandler):
             )
 
     def _send_model_list(self):
-        """Fetch available image models from OpenRouter."""
-        if BACKEND == "openrouter":
+        """Fetch available image models for the current backend."""
+        if BACKEND == "openai":
+            self._json_response(
+                {
+                    "models": [
+                        {"id": "gpt-image-1", "name": "GPT Image 1"},
+                        {"id": "gpt-image-1.5", "name": "GPT Image 1.5"},
+                        {"id": "gpt-image-2", "name": "GPT Image 2"},
+                        {"id": "gpt-image-mini", "name": "GPT Image Mini"},
+                    ]
+                }
+            )
+        elif BACKEND == "openrouter":
             url = "https://openrouter.ai/api/v1/models?output_modalities=image"
             req = urllib.request.Request(url)
             try:
@@ -593,7 +691,9 @@ class StudioHandler(SimpleHTTPRequestHandler):
         self._log_prompt = positive
         self._log_ref_meta = ref_meta
 
-        if BACKEND == "openrouter":
+        if BACKEND == "openai":
+            self._generate_openai(part_id, positive, image_size, seed, ref_images, gen_model, aspect_ratio)
+        elif BACKEND == "openrouter":
             self._generate_openrouter(
                 part_id, positive, negative, image_size, seed, ref_images, gen_model, aspect_ratio, image_size_or
             )
@@ -684,15 +784,18 @@ class StudioHandler(SimpleHTTPRequestHandler):
             "the background must become solid black while the subject remains pixel-perfect."
         )
         try:
-            self._generate_image_via_openrouter(
-                prompt=black_prompt,
-                negative="blurry, distorted, altered subject, changed character, different proportions",
-                aspect_ratio=aspect_ratio,
-                image_size_or=image_size_or,
-                ref_images=[f"/parts/{part_id}_white.png"],
-                output_path=black_path,
-                model=DAG_REF_MODEL,
-            )
+            if BACKEND == "openai":
+                self._black_bg_via_openai(black_prompt, white_path, black_path, to_openai_size(None, aspect_ratio))
+            else:
+                self._generate_image_via_openrouter(
+                    prompt=black_prompt,
+                    negative="blurry, distorted, altered subject, changed character, different proportions",
+                    aspect_ratio=aspect_ratio,
+                    image_size_or=image_size_or,
+                    ref_images=[f"/parts/{part_id}_white.png"],
+                    output_path=black_path,
+                    model=DAG_REF_MODEL,
+                )
         except Exception as e:
             # Clean up white image on failure
             if white_path.exists():
@@ -918,6 +1021,62 @@ class StudioHandler(SimpleHTTPRequestHandler):
             }
         )
 
+    def _generate_openai(self, part_id, positive, image_size, seed, ref_images, gen_model, aspect_ratio=None):
+        """Generate (or edit, when reference images are present) via the OpenAI gpt-image backend."""
+        size = to_openai_size(image_size, aspect_ratio)
+        model = gen_model if is_openai_image_model(gen_model) else None
+        ref_inputs = resolve_openai_refs(ref_images)
+
+        start = time.perf_counter()
+        try:
+            if ref_inputs:
+                images = image_openai.edit(
+                    positive, ref_inputs, model=model, size=size, quality="high", api_key=API_KEY
+                )
+            else:
+                images = image_openai.generate(positive, model=model, size=size, quality="high", api_key=API_KEY)
+        except HttpError as e:
+            self._json_response({"error": f"OpenAI HTTP {e.status}: {e.body}"}, 502)
+            return
+        except Exception as e:
+            self._json_response({"error": f"Request failed: {e}"}, 502)
+            return
+
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        if not images:
+            self._json_response({"error": "No image in response"}, 502)
+            return
+
+        output_path = PROJECT_DIR / "parts" / f"{part_id}.png" if part_id else PROJECT_DIR / "parts" / "_generated.png"
+        output_path.parent.mkdir(exist_ok=True)
+        try:
+            output_path.write_bytes(images[0])
+        except OSError as e:
+            self._json_response({"error": f"Failed to save image: {e}"}, 500)
+            return
+
+        self._json_response(
+            {
+                "part_id": part_id,
+                "seed": seed,
+                "url": f"/parts/{part_id}.png",
+                "path": str(output_path),
+                "timing_ms": elapsed_ms,
+                "model": model or providers.get_image().get("model") or gen_model,
+                "prompt": getattr(self, "_log_prompt", positive),
+                "ref_meta": getattr(self, "_log_ref_meta", []),
+            }
+        )
+
+    def _black_bg_via_openai(self, prompt, white_path, black_path, size):
+        """Regenerate ``white_path`` with a pure-black background via OpenAI edit. Raises on failure."""
+        model = MODEL if is_openai_image_model(MODEL) else None
+        images = image_openai.edit(prompt, [str(white_path)], model=model, size=size, quality="high", api_key=API_KEY)
+        if not images:
+            raise RuntimeError("OpenAI edit returned no image.")
+        black_path.parent.mkdir(parents=True, exist_ok=True)
+        black_path.write_bytes(images[0])
+
     def log_message(self, format, *args):
         if self.path.startswith("/api/"):
             super().log_message(format, *args)
@@ -930,14 +1089,14 @@ def main():
     parser.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
     parser.add_argument(
         "--backend",
-        default="openrouter",
-        choices=["openrouter", "siliconflow"],
-        help="API backend (default: openrouter)",
+        default="openai",
+        choices=["openai", "openrouter", "siliconflow"],
+        help="Image backend (default: openai)",
     )
     parser.add_argument(
         "--model", default="google/gemini-3.1-flash-image-preview", help="Default model for single-part generation"
     )
-    parser.add_argument("--api-key", help="API key (or set OPENROUTER_API_KEY / SILICONFLOW_API_KEY env)")
+    parser.add_argument("--api-key", help="API key (or set OPENAI_API_KEY / OPENROUTER_API_KEY / SILICONFLOW_API_KEY)")
     args = parser.parse_args()
 
     BACKEND = args.backend
@@ -945,11 +1104,20 @@ def main():
 
     if BACKEND == "openrouter":
         API_KEY = args.api_key or os.environ.get("OPENROUTER_API_KEY", "")
-    else:
+    elif BACKEND == "siliconflow":
         API_KEY = args.api_key or os.environ.get("SILICONFLOW_API_KEY", "")
+    else:  # openai — image key/model resolved through the provider settings layer
+        API_KEY = args.api_key or providers.get_image().get("api_key", "")
+        # If --model was left at the OpenRouter default, use the image provider's model.
+        if parser.get_default("model") == MODEL:
+            MODEL = providers.get_image().get("model") or image_openai.DEFAULT_MODEL
 
     if not API_KEY:
-        env_var = "OPENROUTER_API_KEY" if BACKEND == "openrouter" else "SILICONFLOW_API_KEY"
+        env_var = {
+            "openai": "OPENAI_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+            "siliconflow": "SILICONFLOW_API_KEY",
+        }[BACKEND]
         print(f"⚠ {env_var} not set.")
         print("  Set the env var or use --api-key:")
         print(f"    export {env_var}=sk-xxx")
