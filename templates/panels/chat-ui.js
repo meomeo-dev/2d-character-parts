@@ -41,40 +41,11 @@ export class CompanionUI {
   #mount() {
     const root = document.createElement('div');
     root.id = 'companion-shell';
+    // Minimal surface: conversation log + input + send. Header (speaker, live
+    // banner, status readouts, refresh/collapse buttons) and the collapsed
+    // "compact card" were removed — the dialog is always expanded.
     root.innerHTML = `
-      <section id="companion-compact" class="companion-compact">
-        <div class="companion-compact-copy">
-          <div class="companion-compact-line">
-            <span id="companion-compact-speaker" class="companion-compact-speaker">陪伴助手</span>
-            <span id="companion-compact-unread" class="companion-compact-unread" aria-hidden="true"></span>
-          </div>
-          <p id="companion-live-utterance" class="companion-live-utterance">等待她开口...</p>
-          <div id="companion-compact-timer" class="companion-compact-timer">下一次主动发言: --</div>
-        </div>
-        <div class="companion-compact-actions">
-          <button id="companion-expand-chat" class="companion-secondary-btn" type="button">展开对话</button>
-        </div>
-      </section>
       <section id="companion-chat" class="companion-chat">
-        <div class="companion-chat-header">
-          <div>
-            <div class="companion-chat-kicker">RPG Dialogue</div>
-            <h2 id="companion-speaker">陪伴助手</h2>
-            <p id="companion-live-banner" class="companion-live-banner">等待她开口...</p>
-          </div>
-          <div class="companion-chat-side">
-            <div class="companion-chat-meta">
-              <div id="companion-timer">下一次主动发言: --</div>
-              <div id="companion-busy">状态: idle</div>
-              <div id="connection-status" class="companion-connection-status">等待连接...</div>
-              <div id="memory-stats" class="companion-memory-stats">最近 0 条消息 · 0 条关系记忆</div>
-            </div>
-            <div class="companion-chat-actions">
-              <button id="companion-refresh-health" class="companion-secondary-btn" type="button">刷新连接</button>
-              <button id="companion-collapse-chat" class="companion-secondary-btn" type="button">折叠</button>
-            </div>
-          </div>
-        </div>
         <div id="companion-messages" class="companion-messages"></div>
         <form id="companion-input-form" class="companion-input-form">
           <textarea id="companion-input" rows="2" placeholder="对她说点什么..."></textarea>
@@ -86,18 +57,20 @@ export class CompanionUI {
 
     this.root = root;
     this.messagesEl = root.querySelector('#companion-messages');
-    this.timerEl = root.querySelector('#companion-timer');
-    this.compactTimerEl = root.querySelector('#companion-compact-timer');
-    this.busyEl = root.querySelector('#companion-busy');
-    this.connectionEl = root.querySelector('#connection-status');
-    this.memoryStatsEl = root.querySelector('#memory-stats');
-    this.speakerEl = root.querySelector('#companion-speaker');
-    this.compactSpeakerEl = root.querySelector('#companion-compact-speaker');
-    this.liveBannerEl = root.querySelector('#companion-live-banner');
-    this.liveUtteranceEl = root.querySelector('#companion-live-utterance');
-    this.compactUnreadEl = root.querySelector('#companion-compact-unread');
+    // The following runtime readouts no longer have DOM nodes (header removed).
+    // Setters guard against null so the chat orchestration keeps running.
+    this.timerEl = null;
+    this.compactTimerEl = null;
+    this.busyEl = null;
+    this.connectionEl = null;
+    this.memoryStatsEl = null;
+    this.speakerEl = null;
+    this.compactSpeakerEl = null;
+    this.liveBannerEl = null;
+    this.liveUtteranceEl = null;
+    this.compactUnreadEl = null;
     this.chatEl = root.querySelector('#companion-chat');
-    this.compactEl = root.querySelector('#companion-compact');
+    this.compactEl = null;
 
     this.form = root.querySelector('#companion-input-form');
     this.input = root.querySelector('#companion-input');
@@ -124,24 +97,19 @@ export class CompanionUI {
     this.input.addEventListener('focus', () => {
       this.onConversationActivity('focus');
     });
-
-    root.querySelector('#companion-refresh-health').addEventListener('click', () => this.onConnectionRefresh());
-    root.querySelector('#companion-expand-chat').addEventListener('click', () => {
-      this.setChatDisplayMode('expanded');
-    });
-    root.querySelector('#companion-collapse-chat').addEventListener('click', () => {
-      this.setChatDisplayMode('collapsed');
-    });
+    // Header buttons (refresh connection / expand / collapse) were removed; the
+    // dialog is always expanded. Connection refresh still runs on mount via
+    // chat-panel's refreshHealth().
   }
 
   // Config is edited in the main ⚙ Settings panel; here we only refresh the
   // non-field surface (speaker label, theme, chat display mode).
   syncConfig(config) {
     this.config = mergeConfig(config, this.config);
-    this.speakerEl.textContent = this.config.persona.speakerName;
-    this.compactSpeakerEl.textContent = this.config.persona.speakerName;
+    if (this.speakerEl) this.speakerEl.textContent = this.config.persona.speakerName;
+    if (this.compactSpeakerEl) this.compactSpeakerEl.textContent = this.config.persona.speakerName;
     document.body.dataset.companionTheme = this.config.ui.theme;
-    this.setChatDisplayMode(this.config.ui.chatDisplayModeDefault || this.chatDisplayMode, { silent: true });
+    // Dialog is always expanded now — no display-mode toggling.
   }
 
   appendMessage(role, content, meta = {}) {
@@ -156,61 +124,52 @@ export class CompanionUI {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
 
     if (role === 'assistant') {
-      const markUnread = this.chatDisplayMode === 'collapsed' || meta.source === 'timer';
-      this.setLiveUtterance(content, { unread: markUnread, source: meta.source || 'assistant' });
+      this.setLiveUtterance(content, { unread: meta.source === 'timer', source: meta.source || 'assistant' });
     }
   }
 
+  // The live-utterance banner was removed with the header; keep the state so the
+  // orchestration can still call this, but only touch DOM nodes that exist.
   setLiveUtterance(content, options = {}) {
     this.liveUtterance = content || '等待她开口...';
     this.hasUnreadUtterance = Boolean(options.unread);
-    this.liveBannerEl.textContent = this.liveUtterance;
-    this.liveUtteranceEl.textContent = this.liveUtterance;
-    this.root.classList.toggle('has-unread-utterance', this.hasUnreadUtterance);
+    if (this.liveBannerEl) this.liveBannerEl.textContent = this.liveUtterance;
+    if (this.liveUtteranceEl) this.liveUtteranceEl.textContent = this.liveUtterance;
+    if (this.root) this.root.classList.toggle('has-unread-utterance', this.hasUnreadUtterance);
   }
 
-  setChatDisplayMode(mode, options = {}) {
-    const nextMode = mode === 'collapsed' ? 'collapsed' : 'expanded';
-    this.chatDisplayMode = nextMode;
-    this.root.dataset.chatDisplayMode = nextMode;
-
-    if (nextMode === 'expanded') {
-      this.hasUnreadUtterance = false;
-      this.root.classList.remove('has-unread-utterance');
-    }
-
-    if (!options.silent) {
-      // Persist just the display-mode preference through the shared config path.
-      this.onConfigChange({ ui: { chatDisplayModeDefault: nextMode } });
-    }
+  // Dialog is always expanded now; kept as a no-op so callers stay unchanged.
+  setChatDisplayMode() {
+    this.chatDisplayMode = 'expanded';
+    if (this.root) this.root.dataset.chatDisplayMode = 'expanded';
   }
 
   isCollapsed() {
-    return this.chatDisplayMode === 'collapsed';
+    return false;
   }
 
   setBusy(isBusy, detail = 'idle') {
-    this.busyEl.textContent = `状态: ${detail}`;
-    this.root.classList.toggle('is-busy', isBusy);
+    if (this.busyEl) this.busyEl.textContent = `状态: ${detail}`;
+    if (this.root) this.root.classList.toggle('is-busy', isBusy);
   }
 
   setConnectionStatus(text, kind = 'neutral') {
+    if (!this.connectionEl) return;
     this.connectionEl.textContent = text;
     this.connectionEl.dataset.kind = kind;
   }
 
   setTimerCountdown(seconds) {
-    if (!Number.isFinite(seconds)) {
-      this.timerEl.textContent = '下一次主动发言: --';
-      this.compactTimerEl.textContent = '下一次主动发言: --';
-      return;
-    }
-    const text = `下一次主动发言: ${Math.max(0, Math.ceil(seconds))}s`;
-    this.timerEl.textContent = text;
-    this.compactTimerEl.textContent = text;
+    if (!this.timerEl && !this.compactTimerEl) return;
+    const text = Number.isFinite(seconds)
+      ? `下一次主动发言: ${Math.max(0, Math.ceil(seconds))}s`
+      : '下一次主动发言: --';
+    if (this.timerEl) this.timerEl.textContent = text;
+    if (this.compactTimerEl) this.compactTimerEl.textContent = text;
   }
 
   setMemoryStats(stats) {
+    if (!this.memoryStatsEl) return;
     this.memoryStatsEl.textContent = `最近 ${stats.recentCount} 条消息 · ${stats.diaryCount} 条关系记忆 · 已累积 ${stats.turnsSinceCompress} 条新轮次`;
   }
 }

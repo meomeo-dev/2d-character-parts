@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import sharp from "sharp";
 import { editImage, generateImage, toOpenAISize } from "../image-gen.ts";
+import { getImage } from "../providers.ts";
 import { triangulationMatting } from "../image/matting.ts";
 import { PARTS_DIR, partsPath, configPath, ROOT } from "../paths.ts";
 
@@ -203,7 +204,9 @@ export function register(app: Hono): void {
       url: `/parts/${partId || "_generated"}.png`,
       path: outPath,
       timing_ms: timingMs,
-      model: model ?? null,
+      // Echo the model that was actually used: the explicit request model, or the
+      // resolved Provider image model when the request left it unset.
+      model: model ?? getImage().model,
       prompt: positive,
       ref_meta: refMeta,
     });

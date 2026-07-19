@@ -87,6 +87,21 @@ test("buildPrompt drops empty and 'None' modifiers", () => {
   assert.match(p, /vibrant colors/);
 });
 
+test("buildPrompt with refPartLabels numbers parts as Image 1..N and template last", () => {
+  const p = buildPrompt("running cat", 3, 3, { refPartLabels: ["头部", "躯干"] });
+  assert.match(p, /Image 1: 头部\./);
+  assert.match(p, /Image 2: 躯干\./);
+  // Template is the next index after the parts.
+  assert.match(p, /Image 3: the blank grid template/);
+  assert.match(p, /Images 1-2/);
+});
+
+test("buildPrompt without refPartLabels omits the reference block", () => {
+  const p = buildPrompt("running cat", 3, 3, {});
+  assert.doesNotMatch(p, /REFERENCE IMAGES/);
+  assert.doesNotMatch(p, /Image 1:/);
+});
+
 test("buildPrompt (continue mode) adds continuation context", () => {
   const p = buildPrompt("walk cycle", 2, 3, { mode: "continue", prevPromptContext: "idle stance" });
   assert.match(p, /continuing the animation sequence/);
