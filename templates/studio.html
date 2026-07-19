@@ -646,9 +646,9 @@ async function fetchLlmCatalog() {
     const byProvider = {};
     (d.models || []).forEach((id) => {
       const slash = id.indexOf('/');
-      if (slash <= 0) return;
-      const p = id.slice(0, slash);
-      const m = id.slice(slash + 1);
+      // gateway ids are "provider/model"; flat proxies use bare ids → "(direct)".
+      const p = slash > 0 ? id.slice(0, slash) : '(direct)';
+      const m = slash > 0 ? id.slice(slash + 1) : id;
       (byProvider[p] = byProvider[p] || []).push(m);
     });
     Object.keys(byProvider).forEach((p) => byProvider[p].sort());
@@ -673,10 +673,11 @@ function initControlPanel() {
   let _providerCtrl = fp.add(_llmSel, 'provider', []).name('LLM Provider');
   let _modelCtrl = fp.add(_llmSel, 'model', []).name('LLM Model');
   function _commitLlm() {
-    if (_llmSel.provider && _llmSel.model) {
-      PROVIDERS.llm_model = _llmSel.provider + '/' + _llmSel.model;
-      saveProviders();
-    }
+    if (!_llmSel.model) return;
+    const prov = _llmSel.provider;
+    // "(direct)" → save the bare model id; otherwise "provider/model".
+    PROVIDERS.llm_model = prov && prov !== '(direct)' ? prov + '/' + _llmSel.model : _llmSel.model;
+    saveProviders();
   }
   function _repopulateModels() {
     let models = LLM_CATALOG.byProvider[_llmSel.provider] || [];
@@ -688,11 +689,20 @@ function initControlPanel() {
   _providerCtrl.onChange(() => { _repopulateModels(); _commitLlm(); });
   PROVIDER_CTRL.syncLlm = async function (refetch) {
     if (refetch || LLM_CATALOG.providers.length === 0) await fetchLlmCatalog();
-    const cur = (PROVIDERS.llm_model || '').split('/');
-    if (cur[0]) _llmSel.provider = cur[0];
-    if (cur.length > 1) _llmSel.model = cur.slice(1).join('/');
-    let provs = LLM_CATALOG.providers.slice();
-    if (_llmSel.provider && !provs.includes(_llmSel.provider)) provs.unshift(_llmSel.provider);
+    const provs = LLM_CATALOG.providers.slice();
+    const cur = PROVIDERS.llm_model || '';
+    const slash = cur.indexOf('/');
+    if (slash > 0 && provs.includes(cur.slice(0, slash))) {
+      _llmSel.provider = cur.slice(0, slash);
+      _llmSel.model = cur.slice(slash + 1);
+    } else if ((LLM_CATALOG.byProvider['(direct)'] || []).includes(cur)) {
+      _llmSel.provider = '(direct)';
+      _llmSel.model = cur;
+    } else {
+      // Saved model not in the catalog — fall back to the first available.
+      _llmSel.provider = provs[0] || _llmSel.provider;
+      _llmSel.model = (LLM_CATALOG.byProvider[_llmSel.provider] || [])[0] || '';
+    }
     _providerCtrl = _providerCtrl.options(provs.length ? provs : (_llmSel.provider ? [_llmSel.provider] : []));
     _providerCtrl.name('LLM Provider').onChange(() => { _repopulateModels(); _commitLlm(); });
     _repopulateModels();

@@ -15,7 +15,7 @@ import json
 from collections.abc import Callable
 
 import providers
-from _http import get_json, post_json
+from _http import HttpError, get_json, post_json
 
 # Safety cap on tool-calling rounds. Once reached, one final request is sent
 # without tools so the model is forced to produce a natural-language answer,
@@ -32,9 +32,20 @@ def _resolve(base_url: str | None, api_key: str | None, model: str | None) -> tu
     return resolved_base, resolved_key, resolved_model
 
 
+# A browser-like User-Agent. Some gateways sit behind Cloudflare, which blocks
+# the default ``Python-urllib`` UA with a 403 (error 1010); a normal UA passes.
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+)
+
+
 def _auth_headers(api_key: str) -> dict[str, str]:
-    """Return an ``Authorization`` header when a key is present, else empty."""
-    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    """Return request headers: a browser-like UA plus ``Authorization`` when keyed."""
+    headers = {"User-Agent": _USER_AGENT}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 def chat(
@@ -145,6 +156,19 @@ def list_models(*, base_url: str | None = None, api_key: str | None = None) -> l
     array from the response, or an empty list if absent.
     """
     resolved_base, resolved_key, _ = _resolve(base_url, api_key, None)
-    response = get_json(f"{resolved_base}/models", headers=_auth_headers(resolved_key))
-    data = response.get("data")
-    return data if isinstance(data, list) else []
+    headers = _auth_headers(resolved_key)
+    # Model listing is handled independently of the chat/image base path: try the
+    # base as-is, then a ``/v1`` variant, so it works whether base_url is the proxy
+    # root (ai-sdk-friendly) or already versioned. First JSON ``data`` array wins.
+    candidates = [f"{resolved_base}/models"]
+    if not resolved_base.endswith("/v1"):
+        candidates.append(f"{resolved_base}/v1/models")
+    for url in candidates:
+        try:
+            response = get_json(url, headers=headers)
+        except (HttpError, ValueError, OSError):
+            continue
+        data = response.get("data")
+        if isinstance(data, list) and data:
+            return data
+    return []
