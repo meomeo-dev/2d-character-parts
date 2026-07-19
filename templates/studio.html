@@ -203,6 +203,10 @@ button.sm { padding: 3px 8px; font-size: 11px; }
 @media (max-width: 800px) {
   .lil-gui.root { top: auto !important; bottom: 40px !important; }
 }
+
+/* Feature panel mount points — populated by templates/panels/*.js.
+   Empty panels are hidden so they never disturb the existing layout. */
+.feature-panel:empty { display: none; }
 </style>
 </head>
 <body>
@@ -252,6 +256,10 @@ button.sm { padding: 3px 8px; font-size: 11px; }
   </div>
   <div class="log-body" id="log-body"></div>
 </div>
+
+<!-- Feature mount points — populated by templates/panels/*.js (no inline JS needed). -->
+<div id="chat-panel" class="feature-panel"></div>
+<div id="animation-panel" class="feature-panel"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.20/dist/lil-gui.umd.min.js"></script>
 <script>
@@ -1276,5 +1284,6 @@ function createGlobalHint() {
 // ── Start ──────────────────────────────────────────────
 init();
 </script>
+<script type="module" src="../templates/panels/index.js"></script>
 </body>
 </html>

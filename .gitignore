@@ -39,3 +39,11 @@ Thumbs.db
 .env.*.local
 *.key
 credentials.json
+
+# Runtime provider settings (may contain API keys)
+config/runtime_settings.json
+
+# Generated animation output
+animations/
+web/companion/
+*.gif

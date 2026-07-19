@@ -1,0 +1,20 @@
+{
+  "llm": {
+    "base_url": "https://ai-gateway.vercel.sh/v1",
+    "api_key": "",
+    "model": "openai/gpt-5.5"
+  },
+  "image": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "",
+    "model": "gpt-image-1"
+  },
+  "jina": {
+    "api_key": "",
+    "embed_model": "jina-embeddings-v3",
+    "rerank_model": "jina-reranker-v3",
+    "reader_base": "https://r.jina.ai",
+    "search_base": "https://s.jina.ai",
+    "embed_base": "https://api.jina.ai/v1"
+  }
+}

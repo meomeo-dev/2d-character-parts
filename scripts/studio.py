@@ -15,10 +15,12 @@ Usage:
 
 import argparse
 import base64
+import importlib
 import json
 import os
 import sys
 import urllib.request
+from collections.abc import Callable
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
@@ -45,6 +47,32 @@ MODEL = "google/gemini-3.1-flash-image-preview"
 
 SILICONFLOW_API = "https://api.siliconflow.cn/v1/images/generations"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
+
+# ── Extensible route registry ──────────────────────────
+# Feature tracks add API routes by registering handlers here instead of editing
+# do_GET / do_POST. A handler has the signature ``handler(h, parsed) -> None``
+# where ``h`` is the StudioHandler instance and ``parsed`` is the urlparse result.
+EXTRA_GET_ROUTES: dict[str, Callable] = {}
+EXTRA_POST_ROUTES: dict[str, Callable] = {}
+
+# Optional feature-route modules, imported at startup. Each must expose
+# ``register(get_map, post_map)``. Missing modules are created by later tracks.
+FEATURE_ROUTE_MODULES = ["chat_routes", "animation_routes", "jina_routes"]
+
+
+def _load_feature_routes():
+    """Import optional feature-route modules and let each register its handlers.
+
+    Modules absent (ImportError) or without a ``register`` attribute
+    (AttributeError) are skipped silently.
+    """
+    for name in FEATURE_ROUTE_MODULES:
+        try:
+            module = importlib.import_module(name)
+            module.register(EXTRA_GET_ROUTES, EXTRA_POST_ROUTES)
+        except (ImportError, AttributeError):
+            continue
+
 
 # ── Helpers ─────────────────────────────────────────────
 
@@ -223,7 +251,12 @@ class StudioHandler(SimpleHTTPRequestHandler):
             self.path = "/templates/studio.html"
             super().do_GET()
         else:
-            super().do_GET()
+            # Feature-track routes take precedence over static file serving.
+            route_handler = EXTRA_GET_ROUTES.get(parsed.path)
+            if route_handler is not None:
+                route_handler(self, parsed)
+            else:
+                super().do_GET()
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -236,7 +269,12 @@ class StudioHandler(SimpleHTTPRequestHandler):
         elif parsed.path == "/api/settings":
             self._handle_settings()
         else:
-            self.send_error(404)
+            # Feature-track routes are consulted before returning 404.
+            route_handler = EXTRA_POST_ROUTES.get(parsed.path)
+            if route_handler is not None:
+                route_handler(self, parsed)
+            else:
+                self.send_error(404)
 
     # ── API handlers ────────────────────────────────────
 
@@ -916,6 +954,8 @@ def main():
         print("  Set the env var or use --api-key:")
         print(f"    export {env_var}=sk-xxx")
         print("    python3 scripts/studio.py")
+
+    _load_feature_routes()
 
     server = HTTPServer(("0.0.0.0", args.port), StudioHandler)  # nosec B104
     print("\n  🎨 2D Character Parts Studio")
