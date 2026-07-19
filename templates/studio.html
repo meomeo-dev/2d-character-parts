@@ -596,15 +596,80 @@ async function applyApiKey() {
   } catch (e) { /* ignore */ }
 }
 
+// ── Providers (LLM / Image / Jina) 运行期配置 ────────────
+// 无环境变量时可在网页里填 base_url / api_key / model,持久化到 config/runtime_settings.json。
+let PROVIDERS = {
+  llm_base_url: '', llm_api_key: '', llm_model: '',
+  image_base_url: '', image_api_key: '', image_model: '',
+  jina_api_key: '', jina_embed_model: '',
+};
+const PROVIDER_CTRL = {};
+function _keyLabel(base, cfg) {
+  return base + (cfg && cfg.api_key_set ? ` ✓ ${cfg.api_key_hint || ''}` : ' (未配置)');
+}
+async function loadProviders() {
+  try {
+    const d = await (await fetch('/api/providers')).json();
+    PROVIDERS.llm_base_url = d.llm.base_url || '';
+    PROVIDERS.llm_model = d.llm.model || '';
+    PROVIDERS.image_base_url = d.image.base_url || '';
+    PROVIDERS.image_model = d.image.model || '';
+    PROVIDERS.jina_embed_model = d.jina.embed_model || '';
+    if (PROVIDER_CTRL.llmKey) PROVIDER_CTRL.llmKey.name(_keyLabel('LLM API Key', d.llm));
+    if (PROVIDER_CTRL.imgKey) PROVIDER_CTRL.imgKey.name(_keyLabel('Image API Key', d.image));
+    if (PROVIDER_CTRL.jinaKey) PROVIDER_CTRL.jinaKey.name(_keyLabel('Jina API Key', d.jina));
+    Object.values(PROVIDER_CTRL).forEach(c => c && c.updateDisplay && c.updateDisplay());
+  } catch (e) { /* 面板仍可用 */ }
+}
+async function saveProviders() {
+  const patch = {
+    llm: { base_url: PROVIDERS.llm_base_url, model: PROVIDERS.llm_model },
+    image: { base_url: PROVIDERS.image_base_url, model: PROVIDERS.image_model },
+    jina: { embed_model: PROVIDERS.jina_embed_model },
+  };
+  if (PROVIDERS.llm_api_key) patch.llm.api_key = PROVIDERS.llm_api_key;
+  if (PROVIDERS.image_api_key) patch.image.api_key = PROVIDERS.image_api_key;
+  if (PROVIDERS.jina_api_key) patch.jina.api_key = PROVIDERS.jina_api_key;
+  try {
+    await fetch('/api/providers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    PROVIDERS.llm_api_key = PROVIDERS.image_api_key = PROVIDERS.jina_api_key = '';
+    await loadProviders();
+    alert('✓ Providers 已保存到 config/runtime_settings.json');
+  } catch (e) { alert('✗ 保存失败: ' + e); }
+}
+async function loadLlmModels() {
+  try {
+    const d = await (await fetch('/api/llm-models')).json();
+    if (d.error) { alert('拉取模型失败: ' + d.error); return; }
+    const ids = d.models || [];
+    console.log('LLM models (' + ids.length + '):', ids);
+    alert('拉取到 ' + ids.length + ' 个模型(详见浏览器控制台)。\n在 LLM Model 填 provider/model,如 openai/gpt-5.5、deepseek/deepseek-v3.1、google/gemini-2.5-flash');
+  } catch (e) { alert('拉取模型失败: ' + e); }
+}
+
 function initControlPanel() {
   const gui = new lil.GUI({ title: '⚙ Settings', width: 340 });
   GUI_PANEL = gui;
 
   // ── Backend & API ────────────────────────────────────
   const f1 = gui.addFolder('Backend & API');
-  f1.add(SETTINGS, 'backend', ['openrouter', 'siliconflow'])
+  f1.add(SETTINGS, 'backend', ['openai', 'openrouter', 'siliconflow'])
     .onChange(v => { saveSettings(); applyProfileSettings(); });
   f1.add(SETTINGS, 'api_key').onFinishChange(() => { saveSettings(); applyApiKey(); });
+
+  // ── 🔌 Providers: LLM / Image / Jina 运行期 key/base_url/model ──
+  const fp = gui.addFolder('🔌 Providers (LLM / Image / Jina)');
+  fp.add(PROVIDERS, 'llm_base_url').name('LLM Base URL');
+  PROVIDER_CTRL.llmKey = fp.add(PROVIDERS, 'llm_api_key').name('LLM API Key (未配置)');
+  fp.add(PROVIDERS, 'llm_model').name('LLM Model');
+  fp.add({ loadModels: loadLlmModels }, 'loadModels').name('⟳ 拉取 LLM 模型');
+  fp.add(PROVIDERS, 'image_base_url').name('Image Base URL');
+  PROVIDER_CTRL.imgKey = fp.add(PROVIDERS, 'image_api_key').name('Image API Key (未配置)');
+  fp.add(PROVIDERS, 'image_model').name('Image Model');
+  PROVIDER_CTRL.jinaKey = fp.add(PROVIDERS, 'jina_api_key').name('Jina API Key (未配置)');
+  fp.add(PROVIDERS, 'jina_embed_model').name('Jina Embed Model');
+  fp.add({ save: saveProviders }, 'save').name('💾 保存并应用');
+  loadProviders();
 
   // ── Models ────────────────────────────────────────────
   const f2 = gui.addFolder('Models');

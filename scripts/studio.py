@@ -32,6 +32,7 @@ PROJECT_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import image_openai
+import llm_gateway
 import providers
 from _http import HttpError
 from generate_prompts import (
@@ -320,6 +321,10 @@ class StudioHandler(SimpleHTTPRequestHandler):
             self._send_models()
         elif path == "/api/model-list":
             self._send_model_list()
+        elif path == "/api/providers":
+            self._handle_get_providers()
+        elif path == "/api/llm-models":
+            self._send_llm_models()
         elif path.startswith("/parts/") and self.path.endswith(".png"):
             self._serve_part_image()
         elif path == "/" or path == "":
@@ -343,6 +348,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
             self._send_prompts_post()
         elif parsed.path == "/api/settings":
             self._handle_settings()
+        elif parsed.path == "/api/providers":
+            self._handle_post_providers()
         else:
             # Feature-track routes are consulted before returning 404.
             route_handler = EXTRA_POST_ROUTES.get(parsed.path)
@@ -563,6 +570,61 @@ class StudioHandler(SimpleHTTPRequestHandler):
             self._json_response({"ok": True, "backend": BACKEND})
         else:
             self._json_response({"error": "Missing api_key"}, 400)
+
+    def _handle_get_providers(self):
+        """GET /api/providers — resolved LLM/image/Jina settings, API keys masked."""
+        settings = providers.load_settings()
+
+        def mask(cfg):
+            out = {k: v for k, v in cfg.items() if k != "api_key"}
+            key = cfg.get("api_key") or ""
+            out["api_key_set"] = bool(key)
+            out["api_key_hint"] = f"…{key[-4:]}" if len(key) >= 4 else ("set" if key else "")
+            return out
+
+        self._json_response({section: mask(settings[section]) for section in ("llm", "image", "jina")})
+
+    def _handle_post_providers(self):
+        """POST /api/providers — persist an LLM/image/Jina settings patch.
+
+        A blank ``api_key`` is dropped so it never overwrites an existing secret.
+        Keeps the running image-backend globals in sync, then echoes masked settings.
+        """
+        global API_KEY, MODEL
+        length = int(self.headers.get("Content-Length", 0))
+        try:
+            req = json.loads(self.rfile.read(length)) if length else {}
+        except json.JSONDecodeError:
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        patch = {}
+        for section in ("llm", "image", "jina"):
+            block = req.get(section)
+            if not isinstance(block, dict):
+                continue
+            cleaned = {k: v for k, v in block.items() if not (k == "api_key" and not v)}
+            if cleaned:
+                patch[section] = cleaned
+        if patch:
+            providers.save_settings(patch)
+
+        image_cfg = providers.get_image()
+        if image_cfg.get("api_key"):
+            API_KEY = image_cfg["api_key"]
+        if image_cfg.get("model"):
+            MODEL = image_cfg["model"]
+
+        self._handle_get_providers()
+
+    def _send_llm_models(self):
+        """GET /api/llm-models — model IDs available via the LLM gateway (best-effort)."""
+        try:
+            models = llm_gateway.list_models()
+            ids = [m.get("id") for m in models if isinstance(m, dict) and m.get("id")]
+            self._json_response({"models": ids})
+        except (HttpError, OSError, ValueError) as exc:
+            self._json_response({"models": [], "error": str(exc)})
 
     def _serve_part_image(self):
         rel = self.path.lstrip("/")
