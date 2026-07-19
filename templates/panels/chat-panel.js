@@ -6,13 +6,115 @@
 // persistence the original lacked: config + memory are saved to localStorage under
 // `studio_chat_v1` and restored on load.
 import { CompanionUI } from './chat-ui.js';
-import { mergeConfig, sanitizeConfigForExport } from './default-config.js';
+import { CONFIG_LIMITS, mergeConfig, sanitizeConfigForExport } from './default-config.js';
 import { LlmClient } from './llm-client.js';
 import { MemoryEngine } from './memory-engine.js';
 import { Sprite2DController } from './sprite2d-controller.js';
 
 const STORAGE_KEY = 'studio_chat_v1';
 let mounted = false;
+
+function downloadJson(fileName, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+// The lil-gui ⚙ Settings panel is built by the classic inline script in
+// studio.html and exposed as window.GUI_PANEL. It may not exist yet when this
+// module mounts, so poll briefly before injecting the companion folder.
+function whenGuiReady(callback, tries = 40) {
+  if (window.GUI_PANEL && window.GUI_PANEL.addFolder) {
+    callback(window.GUI_PANEL);
+    return;
+  }
+  if (tries <= 0) {
+    return;
+  }
+  window.setTimeout(() => whenGuiReady(callback, tries - 1), 50);
+}
+
+// Build the "💬 Chat / Companion" folder inside the shared ⚙ Settings panel.
+// getConfig() returns the live config; applyPatch(partial) merges + persists it.
+function buildCompanionSettings(gui, getConfig, applyPatch) {
+  const cfg = getConfig();
+  const state = {
+    speakerName: cfg.persona.speakerName,
+    systemPrompt: cfg.persona.systemPrompt,
+    diaryPrompt: cfg.persona.diaryPrompt,
+    model: cfg.api.model,
+    proxyBase: cfg.api.proxyBase,
+    scheduleEnabled: cfg.schedule.enabled,
+    initialAutoSpeakDelaySec: cfg.schedule.initialAutoSpeakDelaySec,
+    speakingIntervalSec: cfg.schedule.speakingIntervalSec,
+    idleGraceSec: cfg.schedule.idleGraceSec,
+    recentMessageLimit: cfg.memory.recentMessageLimit,
+    compressEveryTurns: cfg.memory.compressEveryTurns,
+    keepTurnsAfterCompress: cfg.memory.keepTurnsAfterCompress,
+    enableAutoGesture: cfg.motion.enableAutoGesture,
+    autoGestureCooldownMs: cfg.motion.autoGestureCooldownMs,
+    defaultIdle: cfg.motion.defaultIdle,
+    theme: cfg.ui.theme,
+  };
+  const emit = () =>
+    applyPatch({
+      persona: { speakerName: state.speakerName, systemPrompt: state.systemPrompt, diaryPrompt: state.diaryPrompt },
+      api: { model: state.model, proxyBase: state.proxyBase },
+      schedule: {
+        enabled: state.scheduleEnabled,
+        initialAutoSpeakDelaySec: Number(state.initialAutoSpeakDelaySec),
+        speakingIntervalSec: Number(state.speakingIntervalSec),
+        idleGraceSec: Number(state.idleGraceSec),
+      },
+      memory: {
+        recentMessageLimit: Number(state.recentMessageLimit),
+        compressEveryTurns: Number(state.compressEveryTurns),
+        keepTurnsAfterCompress: Number(state.keepTurnsAfterCompress),
+      },
+      motion: {
+        enableAutoGesture: state.enableAutoGesture,
+        autoGestureCooldownMs: Number(state.autoGestureCooldownMs),
+        defaultIdle: state.defaultIdle,
+      },
+      ui: { theme: state.theme },
+    });
+
+  const lim = CONFIG_LIMITS;
+  const f = gui.addFolder('💬 Chat / Companion');
+
+  const persona = f.addFolder('Persona');
+  persona.add(state, 'speakerName').name('称呼 Speaker').onFinishChange(emit);
+  persona.add(state, 'systemPrompt').name('System Prompt').onFinishChange(emit);
+  persona.add(state, 'diaryPrompt').name('Diary Prompt').onFinishChange(emit);
+
+  const conn = f.addFolder('Connection');
+  conn.add(state, 'model').name('Model (provider/model)').onFinishChange(emit);
+  conn.add(state, 'proxyBase').name('Proxy Base').onFinishChange(emit);
+
+  const sched = f.addFolder('Schedule');
+  sched.add(state, 'scheduleEnabled').name('Auto Speak').onChange(emit);
+  sched.add(state, 'initialAutoSpeakDelaySec', lim.initialAutoSpeakDelaySec.min, lim.initialAutoSpeakDelaySec.max, lim.initialAutoSpeakDelaySec.step).name('Initial Delay (s)').onChange(emit);
+  sched.add(state, 'speakingIntervalSec', lim.speakingIntervalSec.min, lim.speakingIntervalSec.max, lim.speakingIntervalSec.step).name('Interval (s)').onChange(emit);
+  sched.add(state, 'idleGraceSec', lim.idleGraceSec.min, lim.idleGraceSec.max, lim.idleGraceSec.step).name('Idle Grace (s)').onChange(emit);
+
+  const mem = f.addFolder('Memory');
+  mem.add(state, 'recentMessageLimit', lim.recentMessageLimit.min, lim.recentMessageLimit.max, lim.recentMessageLimit.step).name('Recent Turns').onChange(emit);
+  mem.add(state, 'compressEveryTurns', lim.compressEveryTurns.min, lim.compressEveryTurns.max, lim.compressEveryTurns.step).name('Compress Every').onChange(emit);
+  mem.add(state, 'keepTurnsAfterCompress', lim.keepTurnsAfterCompress.min, lim.keepTurnsAfterCompress.max, lim.keepTurnsAfterCompress.step).name('Keep After Compress').onChange(emit);
+
+  const motion = f.addFolder('Motion (2D)');
+  motion.add(state, 'enableAutoGesture').name('Auto Gesture').onChange(emit);
+  motion.add(state, 'autoGestureCooldownMs', 0, 20000, 100).name('Gesture Cooldown (ms)').onChange(emit);
+  motion.add(state, 'defaultIdle', ['idle', 'none']).name('Idle Clip').onChange(emit);
+
+  f.addFolder('Theme').add(state, 'theme', ['ocean-console', 'midnight-glass']).name('Theme').onChange(emit);
+
+  f.add({ export: () => downloadJson('studio-companion-config.json', sanitizeConfigForExport(getConfig())) }, 'export').name('导出配置 Export');
+  f.close();
+}
 
 function injectStylesheet() {
   const href = new URL('./companion-ui.css', import.meta.url).href;
@@ -217,6 +319,9 @@ export function mount() {
     client.setBasePath(companionConfig.api.proxyBase);
     memoryEngine.setConfig(companionConfig);
     sprite.setConfig(companionConfig);
+    if (companionUI) {
+      companionUI.syncConfig(companionConfig);
+    }
     if (!companionConfig.schedule.enabled) {
       companionUI.setTimerCountdown(Number.NaN);
     } else if (!Number.isFinite(nextAutoSpeakAt) || nextAutoSpeakAt <= Date.now()) {
@@ -245,6 +350,9 @@ export function mount() {
 
   updateMemoryStats();
   refreshHealth();
+
+  // Merge companion config editing into the shared ⚙ Settings panel.
+  whenGuiReady((gui) => buildCompanionSettings(gui, () => companionConfig, handleConfigChange));
 
   window.setInterval(() => {
     const secondsUntilSpeak = (nextAutoSpeakAt - Date.now()) / 1000;

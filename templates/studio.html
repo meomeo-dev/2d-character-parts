@@ -650,6 +650,7 @@ async function loadLlmModels() {
 function initControlPanel() {
   const gui = new lil.GUI({ title: '⚙ Settings', width: 340 });
   GUI_PANEL = gui;
+  window.GUI_PANEL = gui;  // bridge for ES-module panels (chat-panel.js) to inject folders
 
   // ── Backend & API ────────────────────────────────────
   const f1 = gui.addFolder('Backend & API');
