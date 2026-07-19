@@ -144,16 +144,6 @@ def _resolve_diary_prompt(profile: dict, payload: dict) -> str:
     return (profile.get("persona", {}).get("diary_prompt") or "").strip()
 
 
-def _extract_model(payload: dict) -> str | None:
-    """Return the model override from ``payload.config.api.model``, or ``None``.
-
-    When ``None``, ``llm_gateway`` falls back to ``providers.get_llm()``.
-    """
-    config = payload.get("config") or {}
-    model = (config.get("api") or {}).get("model")
-    return model or None
-
-
 def build_memory_block(payload: dict) -> str:
     """Serialise the long-term memory (recent diary + stable profile) for the prompt."""
     diary = payload.get("relationshipDiary") or []
@@ -231,7 +221,7 @@ def run_chat(payload: dict) -> dict:
         messages,
         tools,
         _make_executor(dispatch),
-        model=_extract_model(payload),
+        model=None,  # chat uses the configured LLM provider model (providers.get_llm)
     )
 
 
@@ -271,7 +261,7 @@ def run_memory_compression(payload: dict) -> dict:
 
     response = llm_gateway.chat(
         messages,
-        model=_extract_model(payload),
+        model=None,  # chat uses the configured LLM provider model (providers.get_llm)
         extra={"response_format": {"type": "json_object"}},
     )
     raw_content = response["choices"][0]["message"].get("content", "{}")

@@ -45,8 +45,6 @@ function buildCompanionSettings(gui, getConfig, applyPatch) {
     speakerName: cfg.persona.speakerName,
     systemPrompt: cfg.persona.systemPrompt,
     diaryPrompt: cfg.persona.diaryPrompt,
-    model: cfg.api.model,
-    proxyBase: cfg.api.proxyBase,
     scheduleEnabled: cfg.schedule.enabled,
     initialAutoSpeakDelaySec: cfg.schedule.initialAutoSpeakDelaySec,
     speakingIntervalSec: cfg.schedule.speakingIntervalSec,
@@ -62,7 +60,6 @@ function buildCompanionSettings(gui, getConfig, applyPatch) {
   const emit = () =>
     applyPatch({
       persona: { speakerName: state.speakerName, systemPrompt: state.systemPrompt, diaryPrompt: state.diaryPrompt },
-      api: { model: state.model, proxyBase: state.proxyBase },
       schedule: {
         enabled: state.scheduleEnabled,
         initialAutoSpeakDelaySec: Number(state.initialAutoSpeakDelaySec),
@@ -89,10 +86,6 @@ function buildCompanionSettings(gui, getConfig, applyPatch) {
   persona.add(state, 'speakerName').name('称呼 Speaker').onFinishChange(emit);
   persona.add(state, 'systemPrompt').name('System Prompt').onFinishChange(emit);
   persona.add(state, 'diaryPrompt').name('Diary Prompt').onFinishChange(emit);
-
-  const conn = f.addFolder('Connection');
-  conn.add(state, 'model').name('Model (provider/model)').onFinishChange(emit);
-  conn.add(state, 'proxyBase').name('Proxy Base').onFinishChange(emit);
 
   const sched = f.addFolder('Schedule');
   sched.add(state, 'scheduleEnabled').name('Auto Speak').onChange(emit);

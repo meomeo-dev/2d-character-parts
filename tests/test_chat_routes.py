@@ -91,7 +91,8 @@ def test_run_chat_gates_motion_tools_when_gesture_disabled(monkeypatch):
     tool_names = {t["function"]["name"] for t in captured["tools"]}
     assert "motion_play" not in tool_names
     assert "face_set" not in tool_names
-    assert captured["model"] == "x/y"
+    # Chat now uses the configured LLM provider model; config.api.model is ignored.
+    assert captured["model"] is None
 
 
 def test_run_chat_includes_motion_tools_by_default(monkeypatch):

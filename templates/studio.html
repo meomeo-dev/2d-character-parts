@@ -619,6 +619,7 @@ async function loadProviders() {
     if (PROVIDER_CTRL.imgKey) PROVIDER_CTRL.imgKey.name(_keyLabel('Image API Key', d.image));
     if (PROVIDER_CTRL.jinaKey) PROVIDER_CTRL.jinaKey.name(_keyLabel('Jina API Key', d.jina));
     Object.values(PROVIDER_CTRL).forEach(c => c && c.updateDisplay && c.updateDisplay());
+    if (PROVIDER_CTRL.syncLlm) await PROVIDER_CTRL.syncLlm();
   } catch (e) { /* 面板仍可用 */ }
 }
 async function saveProviders() {
@@ -637,14 +638,23 @@ async function saveProviders() {
     alert('✓ Providers 已保存到 config/runtime_settings.json');
   } catch (e) { alert('✗ 保存失败: ' + e); }
 }
-async function loadLlmModels() {
+// LLM 模型目录(来自 gateway /api/llm-models),按 provider 前缀分组,供二级抽屉式选择。
+let LLM_CATALOG = { providers: [], byProvider: {} };
+async function fetchLlmCatalog() {
   try {
     const d = await (await fetch('/api/llm-models')).json();
-    if (d.error) { alert('拉取模型失败: ' + d.error); return; }
-    const ids = d.models || [];
-    console.log('LLM models (' + ids.length + '):', ids);
-    alert('拉取到 ' + ids.length + ' 个模型(详见浏览器控制台)。\n在 LLM Model 填 provider/model,如 openai/gpt-5.5、deepseek/deepseek-v3.1、google/gemini-2.5-flash');
-  } catch (e) { alert('拉取模型失败: ' + e); }
+    const byProvider = {};
+    (d.models || []).forEach((id) => {
+      const slash = id.indexOf('/');
+      if (slash <= 0) return;
+      const p = id.slice(0, slash);
+      const m = id.slice(slash + 1);
+      (byProvider[p] = byProvider[p] || []).push(m);
+    });
+    Object.keys(byProvider).forEach((p) => byProvider[p].sort());
+    LLM_CATALOG = { providers: Object.keys(byProvider).sort(), byProvider };
+  } catch (e) { /* 保留上次/空目录 */ }
+  return LLM_CATALOG;
 }
 
 function initControlPanel() {
@@ -652,18 +662,43 @@ function initControlPanel() {
   GUI_PANEL = gui;
   window.GUI_PANEL = gui;  // bridge for ES-module panels (chat-panel.js) to inject folders
 
-  // ── Backend & API ────────────────────────────────────
-  const f1 = gui.addFolder('Backend & API');
-  f1.add(SETTINGS, 'backend', ['openai', 'openrouter', 'siliconflow'])
-    .onChange(v => { saveSettings(); applyProfileSettings(); });
-  f1.add(SETTINGS, 'api_key').onFinishChange(() => { saveSettings(); applyApiKey(); });
-
-  // ── 🔌 Providers: LLM / Image / Jina 运行期 key/base_url/model ──
+  // ── 🔌 Providers(唯一配置入口,ai-sdk provider 风格)──────────
+  // 已移除旧的 Backend & API / Models 折叠;LLM / 图像 / Jina 全在此配置。
   const fp = gui.addFolder('🔌 Providers (LLM / Image / Jina)');
   fp.add(PROVIDERS, 'llm_base_url').name('LLM Base URL');
   PROVIDER_CTRL.llmKey = fp.add(PROVIDERS, 'llm_api_key').name('LLM API Key (未配置)');
-  fp.add(PROVIDERS, 'llm_model').name('LLM Model');
-  fp.add({ loadModels: loadLlmModels }, 'loadModels').name('⟳ 拉取 LLM 模型');
+
+  // LLM 模型:provider → model 两级抽屉式单选(来自 gateway 模型目录)
+  const _llmSel = { provider: '', model: '' };
+  let _providerCtrl = fp.add(_llmSel, 'provider', []).name('LLM Provider');
+  let _modelCtrl = fp.add(_llmSel, 'model', []).name('LLM Model');
+  function _commitLlm() {
+    if (_llmSel.provider && _llmSel.model) {
+      PROVIDERS.llm_model = _llmSel.provider + '/' + _llmSel.model;
+      saveProviders();
+    }
+  }
+  function _repopulateModels() {
+    let models = LLM_CATALOG.byProvider[_llmSel.provider] || [];
+    if (models.length === 0 && _llmSel.model) models = [_llmSel.model];
+    if (!models.includes(_llmSel.model)) _llmSel.model = models[0] || '';
+    _modelCtrl = _modelCtrl.options(models);
+    _modelCtrl.name('LLM Model').onChange(_commitLlm);
+  }
+  _providerCtrl.onChange(() => { _repopulateModels(); _commitLlm(); });
+  PROVIDER_CTRL.syncLlm = async function (refetch) {
+    if (refetch || LLM_CATALOG.providers.length === 0) await fetchLlmCatalog();
+    const cur = (PROVIDERS.llm_model || '').split('/');
+    if (cur[0]) _llmSel.provider = cur[0];
+    if (cur.length > 1) _llmSel.model = cur.slice(1).join('/');
+    let provs = LLM_CATALOG.providers.slice();
+    if (_llmSel.provider && !provs.includes(_llmSel.provider)) provs.unshift(_llmSel.provider);
+    _providerCtrl = _providerCtrl.options(provs.length ? provs : (_llmSel.provider ? [_llmSel.provider] : []));
+    _providerCtrl.name('LLM Provider').onChange(() => { _repopulateModels(); _commitLlm(); });
+    _repopulateModels();
+  };
+  fp.add({ refresh: () => PROVIDER_CTRL.syncLlm(true) }, 'refresh').name('⟳ 拉取 LLM 模型');
+
   fp.add(PROVIDERS, 'image_base_url').name('Image Base URL');
   PROVIDER_CTRL.imgKey = fp.add(PROVIDERS, 'image_api_key').name('Image API Key (未配置)');
   fp.add(PROVIDERS, 'image_model').name('Image Model');
@@ -672,40 +707,7 @@ function initControlPanel() {
   fp.add({ save: saveProviders }, 'save').name('💾 保存并应用');
   loadProviders();
 
-  // ── Models ────────────────────────────────────────────
-  const f2 = gui.addFolder('Models');
-  // These will be populated with real model IDs initially,
-  // then refreshed when model list is fetched
-  const rootCtrl = f2.add(SETTINGS, 'root_model');
-  rootCtrl.onChange(() => { saveSettings(); applyProfileSettings(); });
-  const refCtrl = f2.add(SETTINGS, 'ref_model');
-  refCtrl.onChange(() => { saveSettings(); applyProfileSettings(); });
-
-  // Async populate model lists
-  fetchModelList().then(modelIds => {
-    if (modelIds.length > 0) {
-      rootCtrl.options(modelIds);
-      refCtrl.options(modelIds);
-      // Ensure current values are in the list
-      if (!modelIds.includes(SETTINGS.root_model)) {
-        SETTINGS.root_model = modelIds[0];
-        saveSettings();
-      }
-      if (!modelIds.includes(SETTINGS.ref_model)) {
-        SETTINGS.ref_model = modelIds[0];
-        saveSettings();
-      }
-    }
-  });
-
-  f2.add({refreshModels: () => {
-    fetchModelList().then(modelIds => {
-      if (modelIds.length > 0) {
-        rootCtrl.options(modelIds);
-        refCtrl.options(modelIds);
-      }
-    });
-  }}, 'refreshModels').name('⟳ Refresh Model List');
+  // (Models 折叠已移除:图像模型由 🔌 Providers → Image Model 统一配置)
 
   // ── Character Profile ─────────────────────────────────
   const f3 = gui.addFolder('Character Profile');
