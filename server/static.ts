@@ -22,7 +22,7 @@ export function registerCors(app: Hono): void {
     if (c.req.method === "OPTIONS") {
       return c.body(null, 204, {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
       });
     }
@@ -35,6 +35,15 @@ export function registerCors(app: Hono): void {
 export function registerStatic(app: Hono): void {
   // SPA entry — serve the studio shell at the root.
   app.get("/", serveStatic({ path: "./templates/studio.html" }));
+
+  // Force revalidation for the SPA templates (panel JS/CSS). Without an ETag or
+  // Cache-Control the browser applies heuristic caching and may keep serving a
+  // stale ES module after we edit it — "no-cache" makes it revalidate against
+  // Last-Modified every load, so edits show up on a normal refresh.
+  app.use("/templates/*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-cache");
+  });
 
   // Static asset trees. `root: "./"` + the prefixed route means the request
   // path (e.g. /templates/panels/index.js) is joined onto the CWD as-is.

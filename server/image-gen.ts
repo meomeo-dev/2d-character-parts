@@ -1,23 +1,17 @@
-// Image generation + editing via the AI SDK.
+// Image generation + editing via the streaming /v1/images endpoints.
 //
-// Ports image_openai.generate / .edit and the studio `_generate_openai` /
-// `_black_bg_via_openai` paths onto the openai-compatible image model.
+// Renders can take 5–15 minutes, so we stream (stream: true + partial_images)
+// rather than issuing one blocking request — the SSE partial frames keep the
+// connection alive and we return the final `*.completed` image. See
+// server/image-stream.ts and docs/image-{generation,edit}-streaming.md.
 //
-// Backend choice (edits): the AI SDK v7 `generateImage` DOES support reference
-// inputs — pass `prompt: { text, images: [...] }` and the openai-compatible
-// `imageModel` routes it to `POST {baseURL}/images/edits` as multipart
-// (model / prompt / image[] / size), exactly like image_openai.edit. So there is
-// no need for a hand-rolled multipart fetch; both text-to-image and img2img go
-// through `generateImage`. The provider `size` param is `${w}x${h}`-typed and
-// rejects "auto", so we pass size (and quality) through `providerOptions.image`
-// instead — those land in the request body verbatim, and "auto" is a valid
-// gpt-image size.
+// The exported generate/edit/toOpenAISize signatures are unchanged from the
+// previous AI-SDK-based implementation, so callers and tests are unaffected.
 import { readFileSync } from "node:fs";
-import { generateImage as aiGenerateImage } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getImage, llmBaseURL } from "./providers.ts";
+import { streamGenerate, streamEdit } from "./image-stream.ts";
 
-/** Valid gpt-image `size` values. */
+/** Valid gpt-image `size` values for the fixed-size providers. */
 const OPENAI_SIZES = new Set(["1024x1024", "1536x1024", "1024x1536", "auto"]);
 
 /**
@@ -57,22 +51,14 @@ function ratioFromPair(text: string, sep: string): number | null {
   return w / h;
 }
 
-/** Build the openai-compatible image model from the resolved image provider. */
-function imageModel(model?: string) {
+/** Resolve the image provider into the fields the stream client needs. */
+function imageConfig(model?: string): { baseURL: string; apiKey: string; model: string } {
   const image = getImage();
-  const provider = createOpenAICompatible({
-    name: "image",
+  return {
     baseURL: llmBaseURL(image.base_url),
     apiKey: image.api_key,
-  });
-  return provider.imageModel(model && model.length > 0 ? model : image.model);
-}
-
-/** Provider body options shared by generate + edit (keyed by the provider name). */
-function imageProviderOptions(size?: string): { image: Record<string, string> } {
-  const opts: Record<string, string> = { quality: "high" };
-  if (size) opts["size"] = size;
-  return { image: opts };
+    model: model && model.length > 0 ? model : image.model,
+  };
 }
 
 /** Options for a text-to-image generation. */
@@ -80,17 +66,18 @@ export interface GenerateImageOptions {
   prompt: string;
   size?: string;
   model?: string;
+  signal?: AbortSignal;
 }
 
 /** Generate an image from a prompt and return the raw PNG bytes. */
 export async function generateImage(opts: GenerateImageOptions): Promise<Uint8Array> {
-  const size = toOpenAISize(opts.size);
-  const result = await aiGenerateImage({
-    model: imageModel(opts.model),
+  const cfg = imageConfig(opts.model);
+  return streamGenerate({
+    ...cfg,
     prompt: opts.prompt,
-    providerOptions: imageProviderOptions(size),
+    size: toOpenAISize(opts.size),
+    signal: opts.signal,
   });
-  return result.image.uint8Array;
 }
 
 /** Options for an image edit — one or more reference inputs (paths or bytes). */
@@ -99,14 +86,14 @@ export interface EditImageOptions {
   images: Array<string | Uint8Array>;
   size?: string;
   model?: string;
+  signal?: AbortSignal;
 }
 
 /**
  * Edit/compose an image against reference inputs and return the raw PNG bytes.
  *
- * String inputs are treated as filesystem paths and read into bytes here (the
- * SDK would otherwise interpret a bare string as base64); `Uint8Array` inputs
- * are passed through as-is.
+ * String inputs are treated as filesystem paths and read into bytes here;
+ * `Uint8Array` inputs are passed through as-is.
  */
 export async function editImage(opts: EditImageOptions): Promise<Uint8Array> {
   if (!opts.images || opts.images.length === 0) {
@@ -115,11 +102,12 @@ export async function editImage(opts: EditImageOptions): Promise<Uint8Array> {
   const images: Uint8Array[] = opts.images.map((src) =>
     typeof src === "string" ? new Uint8Array(readFileSync(src)) : src,
   );
-  const size = opts.size ? toOpenAISize(opts.size) : undefined;
-  const result = await aiGenerateImage({
-    model: imageModel(opts.model),
-    prompt: { text: opts.prompt, images },
-    providerOptions: imageProviderOptions(size),
+  const cfg = imageConfig(opts.model);
+  return streamEdit({
+    ...cfg,
+    prompt: opts.prompt,
+    images,
+    size: opts.size ? toOpenAISize(opts.size) : undefined,
+    signal: opts.signal,
   });
-  return result.image.uint8Array;
 }

@@ -27,6 +27,32 @@ body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: v
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .header h1 { font-size: 16px; font-weight: 600; }
+
+/* Top tab navigation */
+.tabs { display: flex; gap: 4px; margin-left: 8px; }
+.tab-btn {
+  font-size: 13px; font-weight: 500; color: var(--text-muted);
+  background: transparent; border: none; border-radius: 8px;
+  padding: 6px 14px; cursor: pointer; transition: background .12s, color .12s;
+}
+.tab-btn:hover { background: #f0f0f0; color: var(--text); }
+.tab-btn.active { background: var(--accent, #4a90d9); color: #fff; }
+
+/* Tab views: only the view matching body[data-tab] is shown.
+   #studio-view is the classic .main; the others are .tab-view feature panels. */
+#studio-view { display: none; }
+.tab-view { display: none; flex: 1; overflow: auto; }
+body[data-tab='studio'] #studio-view { display: flex; }
+body[data-tab='rpg'] .tab-view[data-tab='rpg'] { display: block; }
+body[data-tab='animation'] .tab-view[data-tab='animation'] { display: block; }
+
+/* The companion (RPG) UI is a fixed-position overlay (#companion-shell);
+   hide it entirely unless the RPG tab is active. */
+body:not([data-tab='rpg']) #companion-shell { display: none !important; }
+
+/* Studio-only header actions (batch generate / cancel) — hidden on other tabs. */
+body:not([data-tab='studio']) .header .actions .primary,
+body:not([data-tab='studio']) .header .actions .danger { display: none; }
 .header .badge { font-size: 11px; color: var(--text-muted); background: #f5f5f5; padding: 2px 8px; border-radius: 10px; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; }
 .header .status { font-size: 12px; color: var(--text-muted); padding: 4px 10px; }
@@ -204,15 +230,18 @@ button.sm { padding: 3px 8px; font-size: 11px; }
   .lil-gui.root { top: auto !important; bottom: 40px !important; }
 }
 
-/* Feature panel mount points — populated by templates/panels/*.js.
-   Empty panels are hidden so they never disturb the existing layout. */
-.feature-panel:empty { display: none; }
+/* Feature panels are shown/hidden via the tab system (see .tab-view rules). */
 </style>
 </head>
-<body>
+<body data-tab="studio">
 <div class="app">
   <div class="header">
-    <h1>2D Character Parts Studio</h1>
+    <h1>Character Studio</h1>
+    <nav class="tabs" id="top-tabs">
+      <button class="tab-btn" data-tab="rpg" onclick="switchTab('rpg')">🎭 RPG Dialogue</button>
+      <button class="tab-btn active" data-tab="studio" onclick="switchTab('studio')">🧩 Character Parts</button>
+      <button class="tab-btn" data-tab="animation" onclick="switchTab('animation')">🎞 Sprite Animation</button>
+    </nav>
     <span class="badge" id="backend-badge">Canvas</span>
     <div class="actions">
       <span class="status" id="api-status">○ checking...</span>
@@ -221,7 +250,7 @@ button.sm { padding: 3px 8px; font-size: 11px; }
     </div>
   </div>
 
-  <div class="main">
+  <div class="main" id="studio-view">
     <!-- Left: Reference -->
     <div class="ref-panel" id="ref-panel">
       <h2>Reference Template</h2>
@@ -237,6 +266,11 @@ button.sm { padding: 3px 8px; font-size: 11px; }
     <!-- Right: Canvas -->
     <div class="canvas" id="canvas"></div>
   </div>
+
+  <!-- Feature tab views — populated by templates/panels/*.js (no inline JS needed).
+       Visibility is driven by body[data-tab]; see the .tab CSS block. -->
+  <div id="chat-panel" class="feature-panel tab-view" data-tab="rpg"></div>
+  <div id="animation-panel" class="feature-panel tab-view" data-tab="animation"></div>
 </div>
 
 <!-- Progress overlay -->
@@ -256,10 +290,6 @@ button.sm { padding: 3px 8px; font-size: 11px; }
   </div>
   <div class="log-body" id="log-body"></div>
 </div>
-
-<!-- Feature mount points — populated by templates/panels/*.js (no inline JS needed). -->
-<div id="chat-panel" class="feature-panel"></div>
-<div id="animation-panel" class="feature-panel"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.20/dist/lil-gui.umd.min.js"></script>
 <script>
@@ -367,7 +397,7 @@ function updateParamInfo() {
     const satisfied = deps.filter(d => GENERATED.has(d));
     const missing = deps.filter(d => !GENERATED.has(d));
     const refCount = satisfied.length;
-    const model = p.model || '?';
+    const model = PROVIDERS.image_model || '(Provider 未设置)';
     const stage = p.stage != null ? p.stage : -1;
     const mode = refCount > 0 ? 'img2img' : (stage === 0 ? 't2i (root)' : 't2i');
 
@@ -521,6 +551,24 @@ function toggleLog() {
   document.getElementById('log-panel').classList.toggle('collapsed');
 }
 
+// ── Top Tab Navigation ─────────────────────────────────
+// Three feature modules as top tabs: RPG Dialogue (companion chat + 2D sprite),
+// Character Parts (this studio), Sprite Animation. Visibility is CSS-driven via
+// body[data-tab]; this just flips the attribute + button state and persists it.
+function switchTab(tab) {
+  document.body.dataset.tab = tab;
+  document.querySelectorAll('#top-tabs .tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  try { localStorage.setItem('studio_active_tab', tab); } catch (e) { /* ignore */ }
+}
+// Restore last-used tab (default: studio, set on <body> inline).
+(function restoreTab() {
+  let saved = null;
+  try { saved = localStorage.getItem('studio_active_tab'); } catch (e) { /* ignore */ }
+  if (saved && ['rpg', 'studio', 'animation'].includes(saved)) switchTab(saved);
+})();
+
 function clearLog() {
   LOG = [];
   renderLog();
@@ -604,9 +652,13 @@ let PROVIDERS = {
   jina_api_key: '', jina_embed_model: '',
 };
 const PROVIDER_CTRL = {};
-function _keyLabel(base, cfg) {
-  return base + (cfg && cfg.api_key_set ? ` ✓ ${cfg.api_key_hint || ''}` : ' (未配置)');
+// 已保存密钥的展示掩码(值可见但脱敏):••••••…后四位。用户不改动=保留原密钥;
+// 若清空或改成不含 • 的新值,则视为设置新密钥(见 saveProviders)。
+function _keyMask(cfg) {
+  if (!cfg || !cfg.api_key_set) return '';
+  return '••••••' + (cfg.api_key_hint || '');
 }
+function _isMask(v) { return typeof v === 'string' && v.indexOf('•') !== -1; }
 async function loadProviders() {
   try {
     const d = await (await fetch('/api/providers')).json();
@@ -615,9 +667,11 @@ async function loadProviders() {
     PROVIDERS.image_base_url = d.image.base_url || '';
     PROVIDERS.image_model = d.image.model || '';
     PROVIDERS.jina_embed_model = d.jina.embed_model || '';
-    if (PROVIDER_CTRL.llmKey) PROVIDER_CTRL.llmKey.name(_keyLabel('LLM API Key', d.llm));
-    if (PROVIDER_CTRL.imgKey) PROVIDER_CTRL.imgKey.name(_keyLabel('Image API Key', d.image));
-    if (PROVIDER_CTRL.jinaKey) PROVIDER_CTRL.jinaKey.name(_keyLabel('Jina API Key', d.jina));
+    // 密钥:把脱敏掩码写进输入框的值,让用户看得见"已配置"且不泄露明文。
+    PROVIDERS.llm_api_key = _keyMask(d.llm);
+    PROVIDERS.image_api_key = _keyMask(d.image);
+    PROVIDERS.jina_api_key = _keyMask(d.jina);
+    // 关键:刷新所有已注册 controller 的 DOM(text 输入框只在 updateDisplay 时回读对象值)。
     Object.values(PROVIDER_CTRL).forEach(c => c && c.updateDisplay && c.updateDisplay());
     if (PROVIDER_CTRL.syncLlm) await PROVIDER_CTRL.syncLlm();
   } catch (e) { /* 面板仍可用 */ }
@@ -628,12 +682,12 @@ async function saveProviders() {
     image: { base_url: PROVIDERS.image_base_url, model: PROVIDERS.image_model },
     jina: { embed_model: PROVIDERS.jina_embed_model },
   };
-  if (PROVIDERS.llm_api_key) patch.llm.api_key = PROVIDERS.llm_api_key;
-  if (PROVIDERS.image_api_key) patch.image.api_key = PROVIDERS.image_api_key;
-  if (PROVIDERS.jina_api_key) patch.jina.api_key = PROVIDERS.jina_api_key;
+  // 只有当输入框里是"真实新密钥"(非掩码、非空)时才提交,避免把掩码写回覆盖真钥。
+  if (PROVIDERS.llm_api_key && !_isMask(PROVIDERS.llm_api_key)) patch.llm.api_key = PROVIDERS.llm_api_key;
+  if (PROVIDERS.image_api_key && !_isMask(PROVIDERS.image_api_key)) patch.image.api_key = PROVIDERS.image_api_key;
+  if (PROVIDERS.jina_api_key && !_isMask(PROVIDERS.jina_api_key)) patch.jina.api_key = PROVIDERS.jina_api_key;
   try {
     await fetch('/api/providers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
-    PROVIDERS.llm_api_key = PROVIDERS.image_api_key = PROVIDERS.jina_api_key = '';
     await loadProviders();
     alert('✓ Providers 已保存到 config/runtime_settings.json');
   } catch (e) { alert('✗ 保存失败: ' + e); }
@@ -665,8 +719,8 @@ function initControlPanel() {
   // ── 🔌 Providers(唯一配置入口,ai-sdk provider 风格)──────────
   // 已移除旧的 Backend & API / Models 折叠;LLM / 图像 / Jina 全在此配置。
   const fp = gui.addFolder('🔌 Providers (LLM / Image / Jina)');
-  fp.add(PROVIDERS, 'llm_base_url').name('LLM Base URL');
-  PROVIDER_CTRL.llmKey = fp.add(PROVIDERS, 'llm_api_key').name('LLM API Key (未配置)');
+  PROVIDER_CTRL.llmBase = fp.add(PROVIDERS, 'llm_base_url').name('LLM Base URL').onFinishChange(saveProviders);
+  PROVIDER_CTRL.llmKey = fp.add(PROVIDERS, 'llm_api_key').name('LLM API Key').onFinishChange(saveProviders);
 
   // LLM 模型:provider → model 两级抽屉式单选(来自 gateway 模型目录)
   const _llmSel = { provider: '', model: '' };
@@ -709,11 +763,11 @@ function initControlPanel() {
   };
   fp.add({ refresh: () => PROVIDER_CTRL.syncLlm(true) }, 'refresh').name('⟳ 拉取 LLM 模型');
 
-  fp.add(PROVIDERS, 'image_base_url').name('Image Base URL');
-  PROVIDER_CTRL.imgKey = fp.add(PROVIDERS, 'image_api_key').name('Image API Key (未配置)');
-  fp.add(PROVIDERS, 'image_model').name('Image Model');
-  PROVIDER_CTRL.jinaKey = fp.add(PROVIDERS, 'jina_api_key').name('Jina API Key (未配置)');
-  fp.add(PROVIDERS, 'jina_embed_model').name('Jina Embed Model');
+  PROVIDER_CTRL.imgBase = fp.add(PROVIDERS, 'image_base_url').name('Image Base URL').onFinishChange(saveProviders);
+  PROVIDER_CTRL.imgKey = fp.add(PROVIDERS, 'image_api_key').name('Image API Key').onFinishChange(saveProviders);
+  PROVIDER_CTRL.imgModel = fp.add(PROVIDERS, 'image_model').name('Image Model').onFinishChange(saveProviders);
+  PROVIDER_CTRL.jinaKey = fp.add(PROVIDERS, 'jina_api_key').name('Jina API Key').onFinishChange(saveProviders);
+  PROVIDER_CTRL.jinaModel = fp.add(PROVIDERS, 'jina_embed_model').name('Jina Embed Model').onFinishChange(saveProviders);
   fp.add({ save: saveProviders }, 'save').name('💾 保存并应用');
   loadProviders();
 
@@ -799,7 +853,7 @@ function render() {
     <div class="header-row">
       <span class="label">🌐 Global Reference</span>
       <span class="ar-badge">AR: ${GLOBAL_PROMPT.ar}</span>
-      <span class="ar-badge" style="color:var(--accent);">${GLOBAL_PROMPT.model || ''}</span>
+      <span class="ar-badge" style="color:var(--accent);">${PROVIDERS.image_model || ''}</span>
     </div>
     <div class="body">
       <div class="preview">
@@ -911,19 +965,19 @@ async function generateGlobal() {
     const resp = await fetch('/api/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({part_id: 'global_reference', positive: ta.value, negative: GLOBAL_PROMPT.negative, image_size: '928x1664', model: SETTINGS.root_model, image_size_or: SETTINGS.image_root_size, aspect_ratio: SETTINGS.image_root_ar}),
+      body: JSON.stringify({part_id: 'global_reference', positive: ta.value, negative: GLOBAL_PROMPT.negative, image_size: '928x1664', image_size_or: SETTINGS.image_root_size, aspect_ratio: SETTINGS.image_root_ar}),
       signal: activeController.signal,
     });
     clearInterval(timer);
     const data = await resp.json();
     if (data.error) {
       hintEl.innerHTML = `✗ ${data.error}`;
-      pushLog('global_reference', ta.value, [], SETTINGS.root_model, 'err', 0, null);
+      pushLog('global_reference', ta.value, [], data.model || '?', 'err', 0, null);
       return;
     }
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     hintEl.innerHTML = `✓ seed: ${data.seed} · inference: ${data.timing_ms || '?'}ms · total: ${formatElapsed(elapsed)}`;
-    pushLog('global_reference', data.prompt || ta.value, data.ref_meta || [], SETTINGS.root_model, 'ok', data.timing_ms, data.seed);
+    pushLog('global_reference', data.prompt || ta.value, data.ref_meta || [], data.model || '?', 'ok', data.timing_ms, data.seed);
     GENERATED.add('global_reference');
     const img = document.getElementById('global-preview');
     img.style.display = 'block';
@@ -977,13 +1031,11 @@ async function generatePart(id) {
 
   try {
     const partInfo = PARTS.find(x => x.id === id);
-    const genModel = (partInfo && partInfo.model) ? partInfo.model : undefined;
     const reqBody = {
       part_id: id, positive: ta.value,
       negative: (partInfo && partInfo.negative) ? partInfo.negative : GLOBAL_PROMPT.negative, image_size: '1328x1328',
       image_size_or: SETTINGS.image_part_size, aspect_ratio: SETTINGS.image_part_ar,
     };
-    if (genModel) reqBody.model = genModel;
     if (refImages.length) reqBody.ref_images = refImages;
     const resp = await fetch('/api/generate', {
       method: 'POST',
@@ -995,13 +1047,13 @@ async function generatePart(id) {
     const data = await resp.json();
     if (data.error) {
       hint.textContent = `✗ ${data.error}`; hint.style.color = '#e74c3c';
-      pushLog(id, ta.value, [], genModel || '?', 'err', 0, null);
+      pushLog(id, ta.value, [], data.model || '?', 'err', 0, null);
       return;
     }
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     hint.innerHTML = `✓ seed: ${data.seed} · ${data.timing_ms || '?'}ms · ${formatElapsed(elapsed)}`;
     hint.style.color = '';
-    pushLog(id, data.prompt || ta.value, data.ref_meta || [], genModel || '?', 'ok', data.timing_ms, data.seed);
+    pushLog(id, data.prompt || ta.value, data.ref_meta || [], data.model || '?', 'ok', data.timing_ms, data.seed);
 
     GENERATED.add(id);
     MATTED.delete(id);  // new generation replaces matted version
@@ -1175,13 +1227,12 @@ async function batchGenerate() {
     for (const pid of stageIds) {
       if (failed || cancelled) break;
 
-      let positive, imgSize, displayLabel, genModel;
+      let positive, imgSize, displayLabel;
 
       if (pid === 'global_reference') {
         positive = GLOBAL_PROMPT.positive;
         imgSize = '928x1664';
         displayLabel = 'Global Reference 全局参考';
-        genModel = SETTINGS.root_model;
         negative = GLOBAL_PROMPT.negative;
         imgSizeOr = SETTINGS.image_root_size;
         ar = SETTINGS.image_root_ar;
@@ -1198,7 +1249,6 @@ async function batchGenerate() {
         positive = ta ? ta.value : p.positive;
         imgSize = '1328x1328';
         displayLabel = `${p.label_cn} (${pid})`;
-        genModel = p.model || undefined;
         negative = p.negative || GLOBAL_PROMPT.negative;
         imgSizeOr = SETTINGS.image_part_size;
         ar = SETTINGS.image_part_ar;
@@ -1216,7 +1266,6 @@ async function batchGenerate() {
         negative: negative, image_size: imgSize,
         image_size_or: imgSizeOr, aspect_ratio: ar,
       };
-      if (genModel) reqBody.model = genModel;
       if (refImages.length) reqBody.ref_images = refImages;
 
       const partStart = Date.now();
@@ -1232,7 +1281,7 @@ async function batchGenerate() {
         if (data.error) {
           item.className = 'progress-item';
           item.innerHTML = `<span style="color:#e74c3c;">✗</span> ${displayLabel} — ${data.error}`;
-          pushLog(pid, positive, [], genModel || '?', 'err', 0, null);
+          pushLog(pid, positive, [], data.model || '?', 'err', 0, null);
           failed = true;
 
           // Mark remaining stages as skipped
@@ -1247,7 +1296,7 @@ async function batchGenerate() {
         }
         item.className = 'progress-item';
         item.innerHTML = `<span class="check">✓</span> ${displayLabel} · seed: ${data.seed} · ${data.timing_ms || '?'}ms · ${formatElapsed(partElapsed)}`;
-        pushLog(pid, data.prompt || positive, data.ref_meta || [], genModel || '?', 'ok', data.timing_ms, data.seed);
+        pushLog(pid, data.prompt || positive, data.ref_meta || [], data.model || '?', 'ok', data.timing_ms, data.seed);
         completed.push(pid);
         if (pid === 'global_reference') globalDone = true;
       } catch (e) {

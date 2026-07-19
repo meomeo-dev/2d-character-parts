@@ -7,7 +7,7 @@ import { test, before, after, mock } from "node:test";
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
 
@@ -173,4 +173,89 @@ test("GET /api/animations lists persisted records with URLs", async () => {
     assert.ok(typeof r["id"] === "string");
     assert.match(String(r["sheet_url"]), /^\/animations\//);
   }
+});
+
+test("POST /api/animate passes ref parts first and the grid template last, in order", async () => {
+  reset();
+  const partsDir = join(TMP, "parts");
+  mkdirSync(partsDir, { recursive: true });
+  for (const id of ["head", "torso", "hand_L"]) {
+    writeFileSync(join(partsDir, `${id}.png`), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  }
+  // A ref id with no PNG is dropped (not sent to editImage).
+  const res = await post(app(), "/api/animate", {
+    description: "a knight",
+    rows: 2,
+    cols: 2,
+    ref_parts: ["torso", "head", "missing_part", "hand_L"],
+  });
+  assert.equal(res.status, 200);
+  assert.equal(editCalls.length, 1);
+  const images = editCalls[0]!.images as string[];
+  // parts (existing, in selection order) first, template last.
+  assert.equal(images.length, 4); // torso, head, hand_L, template
+  assert.equal(images[0], join(partsDir, "torso.png"));
+  assert.equal(images[1], join(partsDir, "head.png"));
+  assert.equal(images[2], join(partsDir, "hand_L.png"));
+  assert.match(images[3]!, /grid_2x2_.*\.png$/); // template is last
+
+  // buildPrompt received labels in the same order (ids, since config is absent).
+  const opts = (buildPromptCalls[0] as { opts: { refPartLabels?: string[] } }).opts;
+  assert.deepEqual(opts.refPartLabels, ["torso", "head", "hand_L"]);
+
+  // Record persists the resolved ref_parts order.
+  const record = ((await res.json()) as Record<string, unknown>)["record"] as Record<string, unknown>;
+  assert.deepEqual(record["ref_parts"], ["torso", "head", "hand_L"]);
+});
+
+test("POST /api/animate rejects more than 15 reference parts", async () => {
+  reset();
+  const many = Array.from({ length: 16 }, (_, i) => `p${i}`);
+  const res = await post(app(), "/api/animate", { description: "x", rows: 2, cols: 2, ref_parts: many });
+  assert.equal(res.status, 400);
+  assert.equal(editCalls.length, 0);
+});
+
+test("POST /api/animate persists the action name for sprite playback", async () => {
+  reset();
+  const res = await post(app(), "/api/animate", { description: "a knight", rows: 2, cols: 2, name: "wave" });
+  assert.equal(res.status, 200);
+  const record = ((await res.json()) as Record<string, unknown>)["record"] as Record<string, unknown>;
+  assert.equal(record["name"], "wave");
+});
+
+test("PATCH /api/animations/:id reassigns the action name", async () => {
+  reset();
+  // Create a record, then rename its action.
+  const created = (await (await post(app(), "/api/animate", {
+    description: "a mage",
+    rows: 2,
+    cols: 2,
+    name: "idle",
+  })).json()) as Record<string, unknown>;
+  const id = (created["record"] as Record<string, unknown>)["id"] as string;
+
+  const res = await app().request(`/api/animations/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "nod" }),
+  });
+  assert.equal(res.status, 200);
+  const record = ((await res.json()) as Record<string, unknown>)["record"] as Record<string, unknown>;
+  assert.equal(record["name"], "nod");
+
+  // Persisted: a fresh GET reflects the new name.
+  const list = (await (await app().request("/api/animations")).json()) as {
+    records: Array<Record<string, unknown>>;
+  };
+  assert.equal(list.records.find((r) => r["id"] === id)?.["name"], "nod");
+});
+
+test("PATCH /api/animations/:id 404s for an unknown id", async () => {
+  const res = await app().request("/api/animations/does-not-exist", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "wave" }),
+  });
+  assert.equal(res.status, 404);
 });

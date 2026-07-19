@@ -48,6 +48,30 @@ export class Sprite2DController {
     this.config = config;
   }
 
+  /**
+   * Drop the cached clip index so the next playMotion / start re-fetches from
+   * the server. Call this after new animations are generated elsewhere (the
+   * Sprite Animation panel) so freshly-created clips become playable without a
+   * full page reload. Optionally re-fetches immediately when `reload` is true.
+   */
+  async refreshClips({ reload = false } = {}) {
+    this.clips = null;
+    if (reload) {
+      await this.#loadClips();
+    }
+  }
+
+  /**
+   * Kick off the initial animation after mount. Loads the clip index and plays
+   * the default idle clip so a freshly-loaded / refreshed page shows the looping
+   * GIF instead of sitting on the "⟨ idle ⟩" placeholder. Safe to call once the
+   * controller is constructed (config optional; falls back to 'idle').
+   */
+  async start() {
+    await this.#loadClips();
+    this.#goIdle();
+  }
+
   // --- effect application (mirrors motion-controller switch) ---
 
   applyEffects(effects = []) {
@@ -156,10 +180,9 @@ export class Sprite2DController {
     this.placeholder = document.createElement('div');
     this.placeholder.className = 'sprite2d-placeholder';
     this.placeholder.textContent = '⟨ idle ⟩';
-    this.faceBadge = document.createElement('div');
-    this.faceBadge.className = 'sprite2d-face';
-    this.faceBadge.textContent = EXPRESSION_EMOJI.neutral;
-    this.stage.append(this.frame, this.placeholder, this.faceBadge);
+    // No emoji face badge — expression is tracked in state / stage dataset only.
+    this.faceBadge = null;
+    this.stage.append(this.frame, this.placeholder);
   }
 
   async #loadClips() {
@@ -176,7 +199,9 @@ export class Sprite2DController {
   }
 
   #indexClips(data) {
-    const list = Array.isArray(data) ? data : data?.animations || data?.items || data?.clips || [];
+    const list = Array.isArray(data)
+      ? data
+      : data?.records || data?.animations || data?.items || data?.clips || [];
     const map = {};
     for (const entry of list) {
       if (!entry) {

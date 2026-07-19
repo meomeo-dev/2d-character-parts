@@ -152,6 +152,14 @@ export function mount() {
   container.appendChild(stage);
   const sprite = new Sprite2DController(stage, { animationsUrl: '/api/animations' });
   sprite.setConfig(companionConfig);
+  // Play the default idle animation on load so a refreshed page shows the GIF
+  // instead of the "⟨ idle ⟩" placeholder (fire-and-forget; loads clips first).
+  sprite.start();
+  // Live-sync when the Sprite Animation panel generates a new clip: drop the
+  // cached index so the next playMotion picks it up (no page reload needed).
+  window.addEventListener('animations:updated', () => {
+    sprite.refreshClips();
+  });
 
   let companionUI = null;
   let assistantBusy = false;
