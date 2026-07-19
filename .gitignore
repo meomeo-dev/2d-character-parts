@@ -43,6 +43,9 @@ credentials.json
 # Runtime provider settings (may contain API keys)
 config/runtime_settings.json
 
+# Vector memory store (generated at runtime)
+config/vector_memory.json
+
 # Generated animation output
 animations/
 web/companion/
