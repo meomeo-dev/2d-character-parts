@@ -8,6 +8,8 @@
 // never the value.
 import type { Hono } from "hono";
 import { getLlm } from "../providers.ts";
+import { chat, compressMemory } from "../llm.ts";
+import type { ChatOptions, CompressMemoryOptions } from "../llm.ts";
 
 export function register(app: Hono): void {
   app.get("/api/health", (c) => {
@@ -20,11 +22,38 @@ export function register(app: Hono): void {
     });
   });
 
-  // TODO(llm/chat track): port chat_routes.run_chat via server/llm.ts#chat.
-  app.post("/api/chat", (c) => c.json({ error: "not implemented", todo: "llm/chat track" }, 501));
+  // POST /api/chat — run a companion chat turn (system prompt + memory + tool loop).
+  app.post("/api/chat", async (c) => {
+    let body: ChatOptions;
+    try {
+      body = (await c.req.json()) as ChatOptions;
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    try {
+      return c.json(await chat(body));
+    } catch (err) {
+      return c.json({ error: `Chat failed: ${errorMessage(err)}` }, 500);
+    }
+  });
 
-  // TODO(llm/chat track): port chat_routes.run_memory_compression via server/llm.ts#compressMemory.
-  app.post("/api/memory/compress", (c) =>
-    c.json({ error: "not implemented", todo: "llm/chat track" }, 501),
-  );
+  // POST /api/memory/compress — compress recent turns into a relationship-diary summary.
+  app.post("/api/memory/compress", async (c) => {
+    let body: CompressMemoryOptions;
+    try {
+      body = (await c.req.json()) as CompressMemoryOptions;
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    try {
+      return c.json(await compressMemory(body));
+    } catch (err) {
+      return c.json({ error: `Memory compression failed: ${errorMessage(err)}` }, 500);
+    }
+  });
+}
+
+/** Extract a message string from an unknown thrown value. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
