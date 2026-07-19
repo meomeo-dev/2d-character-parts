@@ -53,3 +53,6 @@ config/vector_memory.json
 animations/
 web/companion/
 *.gif
+
+# tracked-symlink guard
+/node_modules
