@@ -8,11 +8,6 @@
 //     defaultIdle is a clip name and autoGestureCooldownMs throttles fallback
 //     gestures.
 export const DEFAULT_CONFIG = {
-  api: {
-    proxyBase: '/api',
-    // provider/model form, e.g. "openai/gpt-5.5"; empty falls back to server settings.
-    model: 'openai/gpt-5.5',
-  },
   persona: {
     speakerName: '元気少女',
     systemPrompt: '你是一位温柔、坦率、不过度黏人的虚拟陪伴者。你会结合最近对话、关系记忆与当前场景，自然地回应用户。若合适，可以调用动作工具让表达更有生命感。避免说教、避免空泛夸奖、避免连续重复类似句式。',
@@ -111,10 +106,6 @@ export function mergeConfig(overrides = {}, base = DEFAULT_CONFIG) {
 
 export function sanitizeConfigForExport(config) {
   return mergeConfig({
-    api: {
-      proxyBase: config.api.proxyBase,
-      model: config.api.model,
-    },
     persona: {
       speakerName: config.persona.speakerName,
       systemPrompt: config.persona.systemPrompt,

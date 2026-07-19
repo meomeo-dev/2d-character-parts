@@ -141,7 +141,7 @@ export function mount() {
   const persisted = loadPersisted();
   let companionConfig = mergeConfig(persisted.config || {});
 
-  const client = new LlmClient(companionConfig.api.proxyBase);
+  const client = new LlmClient(); // studio serves companion routes under /api (local)
   const memoryEngine = new MemoryEngine(companionConfig);
   if (persisted.memory) {
     memoryEngine.importState(persisted.memory);
@@ -309,7 +309,6 @@ export function mount() {
 
   function handleConfigChange(nextConfig) {
     companionConfig = mergeConfig(nextConfig, companionConfig);
-    client.setBasePath(companionConfig.api.proxyBase);
     memoryEngine.setConfig(companionConfig);
     sprite.setConfig(companionConfig);
     if (companionUI) {
