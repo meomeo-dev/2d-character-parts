@@ -26,8 +26,8 @@ try:
 
     HAS_PIL = True
 except ImportError:  # pragma: no cover - exercised only when Pillow is absent
-    PILImage = None
-    ImageDraw = None
+    PILImage = None  # type: ignore[assignment]
+    ImageDraw = None  # type: ignore[assignment]
     HAS_PIL = False
 
 # Min / max grid dimension, inclusive (matches the reference template rules).
@@ -253,7 +253,7 @@ def synthesize_continuation_grid(
         cell = prev_img.crop((src_left, src_upper, src_left + src_cell_w, src_upper + src_cell_h))
 
         if (src_cell_w, src_cell_h) != (dst_cell_w, dst_cell_h):
-            cell = cell.resize((dst_cell_w, dst_cell_h), PILImage.LANCZOS)
+            cell = cell.resize((dst_cell_w, dst_cell_h), PILImage.LANCZOS)  # type: ignore[attr-defined]
 
         dst_left = c * (dst_cell_w + line_width) + line_width
         dst_upper = line_width  # first row

@@ -1097,6 +1097,14 @@ def main():
         "--model", default="google/gemini-3.1-flash-image-preview", help="Default model for single-part generation"
     )
     parser.add_argument("--api-key", help="API key (or set OPENAI_API_KEY / OPENROUTER_API_KEY / SILICONFLOW_API_KEY)")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Bind address (default: 127.0.0.1). The chat/image/search proxies are "
+            "UNAUTHENTICATED, so only pass 0.0.0.0 on a trusted network."
+        ),
+    )
     args = parser.parse_args()
 
     BACKEND = args.backend
@@ -1125,10 +1133,13 @@ def main():
 
     _load_feature_routes()
 
-    server = HTTPServer(("0.0.0.0", args.port), StudioHandler)  # nosec B104
+    if args.host == "0.0.0.0":  # nosec B104 — opt-in only, warned below
+        print("⚠ Binding 0.0.0.0: the unauthenticated chat/image/search proxies will be reachable on your LAN.")
+
+    server = HTTPServer((args.host, args.port), StudioHandler)
     print("\n  🎨 2D Character Parts Studio")
     print("  ─────────────────────────────")
-    print(f"  URL:     http://localhost:{args.port}")
+    print(f"  URL:     http://{args.host}:{args.port}")
     print(f"  Backend: {BACKEND}")
     print(f"  Model:   {MODEL}")
     print(f"  API:     {'✓ set' if API_KEY else '✗ not set'}")

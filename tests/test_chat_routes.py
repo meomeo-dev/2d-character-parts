@@ -13,13 +13,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import chat_routes
 
 
-def test_build_registry_includes_motion_tools_and_skips_missing():
+def test_build_registry_includes_motion_tools_and_skips_missing(monkeypatch):
+    # A non-existent optional tool module must be skipped without raising
+    # (the guarded import contract). Use a bogus name so the assertion holds
+    # regardless of which real optional modules (e.g. jina_tools) are merged.
+    monkeypatch.setattr(chat_routes, "COMPANION_TOOL_MODULES", ["companion_effects", "no_such_tool_module_xyz"])
     tool_defs, dispatch, owner = chat_routes._build_registry()
     names = {t["function"]["name"] for t in tool_defs}
     assert {"motion_play", "face_set", "motion_stop"} <= names
     assert owner["motion_play"] == "companion_effects"
-    # jina_tools (Track D) is absent here — the guarded import must not raise.
-    assert "jina_tools" not in set(owner.values())
+    assert "no_such_tool_module_xyz" not in set(owner.values())
     effect, _ = dispatch["motion_play"]("motion_play", {"name": "wave"})
     assert effect["type"] == "motion_play"
 

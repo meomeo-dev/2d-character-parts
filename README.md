@@ -1,6 +1,12 @@
 # 2D Character Parts — 2D 角色骨骼动画部件工具
 
-网格目录风格的角色部件分解布局模板生成与自动化工具。将角色拆分为 18 个独立 Sprite 部件（透明底），通过 DAG 管线分阶段生成，支持参考图引导的 img2img 模式。
+2D 角色的**创建 · 陪伴 · 动作**一体化工具。三大能力：
+
+1. **创建 2D 角色**（Create）：将角色拆分为 19 个独立 Sprite 部件（透明底），通过 DAG 管线分阶段生成，支持参考图引导的 img2img。
+2. **对话陪伴**（Companion）：带记忆的 LLM 陪伴对话，通过 Vercel AI Gateway 多 provider 切换，工具调用可驱动 2D 动作与联网搜索/抓取（Jina）。
+3. **动作动画**（Animation）：文字/网格 → 图像大模型逐帧重绘 → 切帧组 GIF 的雪碧图动画生成。
+
+图像生成默认走 **OpenAI gpt-image**（generate/edit，自定义 base_url/key/model），保留 OpenRouter / SiliconFlow 作为可选后端。
 
 ## 目录结构
 
@@ -155,3 +161,39 @@ pre-commit install
 # 手动运行所有检查
 pre-commit run --all-files
 ```
+
+## 环境变量与 Provider 配置
+
+三类外部服务的 key 通过环境变量或 `config/runtime_settings.json`（git-ignored，见 `config/runtime_settings.example.json`）配置，由 `scripts/providers.py` 统一解析。**key 只经 provider 层读取并放入 Authorization 头，绝不写入日志或响应体。**
+
+| 服务 | 环境变量 | 默认 base_url | 默认模型 |
+|------|----------|---------------|----------|
+| LLM（对话）| `AI_GATEWAY_API_KEY` | `https://ai-gateway.vercel.sh/v1` | `openai/gpt-5.5`（用 `GET /v1/models` 查实时 ID）|
+| 图像（角色/动画）| `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-image-1` |
+| 向量/搜索/抓取 | `JINA_API_KEY` | `api.jina.ai` / `s.jina.ai` / `r.jina.ai` | `jina-embeddings-v3` / `jina-reranker-v3` |
+
+```bash
+export AI_GATEWAY_API_KEY=...    # 对话 LLM（多 provider：openai/deepseek/xai/google/anthropic 等）
+export OPENAI_API_KEY=sk-...     # gpt-image 图像生成
+export JINA_API_KEY=jina_...     # 向量记忆 + 联网搜索/抓取
+python3 scripts/studio.py        # 默认绑 127.0.0.1:8765
+```
+
+## 对话陪伴（Companion）
+
+- 后端路由：`POST /api/chat`（对话轮 + tool-calling → effects）、`POST /api/memory/compress`（记忆压缩）、`GET /api/health`。
+- LLM 经 AI Gateway OpenAI 兼容端点，模型格式 `provider/model`；工具调用产出 `effects`（`motion_play` / `face_set` / `motion_stop`）由前端 `Sprite2DController` 消费，映射到 2D 动画 clip。
+- 记忆：`memory-engine.js`（recentMessages / relationshipDiary / stableProfile）+ Jina 向量召回（`POST /api/memory/add` · `/api/memory/retrieve`），localStorage 持久化（`studio_chat_v1`）。
+- 联网工具：`web_search` / `web_read`（Jina `s.jina.ai` / `r.jina.ai`），也可直接 `POST /api/search` · `/api/read`。
+- persona 取自 `config/character_profile.json` 的 `persona` 字段。前端面板挂载于 `#chat-panel`（`templates/panels/chat-panel.js`）。
+
+## 动作动画（Animation）
+
+- 后端路由：`POST /api/animate`（idea/description + 网格参数 → gpt-image 生成 sprite sheet → 切帧组 GIF）、`GET /api/animations`、`GET /animations/<file>`。
+- 移植自参考项目：网格模板 `create_grid_image` → `build_prompt`（img2img 结构参考）→ `slice_and_gif`（行优先切帧 + Pillow GIF）+ 续写 `synthesize_continuation_grid`；时序记录 `AnimationStore`（`animations/history.json`）。
+- idea → 英文动作描述扩写走对话 LLM（AI Gateway）。前端面板挂载于 `#animation-panel`（`templates/panels/animation-panel.js`）。
+
+## 安全（Security）
+
+- 服务器**默认绑定 `127.0.0.1`**。`/api/chat`、`/api/animate`、`/api/search` 等是**无鉴权代理**，会消耗你的 API 额度；仅在可信网络用 `--host 0.0.0.0` 暴露（会打印警告）。
+- API key 不落盘（除非显式经 `/api/settings` 写入 `runtime_settings.json`）、不回显。

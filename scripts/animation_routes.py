@@ -221,7 +221,7 @@ def handle_animate(h, parsed) -> None:
             "generation_mode": mode,
         }
     )
-    record = _record_urls(store.get_record(record_id))
+    record = _record_urls(store.get_record(record_id) or {})
     h._json_response(
         {
             "gif_url": record.get("gif_url"),
