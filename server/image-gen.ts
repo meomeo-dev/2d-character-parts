@@ -66,6 +66,8 @@ export interface GenerateImageOptions {
   prompt: string;
   size?: string;
   model?: string;
+  /** gpt-image background mode; "transparent" yields an alpha PNG (pet sprites). */
+  background?: "transparent" | "opaque" | "auto";
   signal?: AbortSignal;
 }
 
@@ -76,6 +78,7 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Uint8Ar
     ...cfg,
     prompt: opts.prompt,
     size: toOpenAISize(opts.size),
+    background: opts.background,
     signal: opts.signal,
   });
 }
@@ -86,6 +89,8 @@ export interface EditImageOptions {
   images: Array<string | Uint8Array>;
   size?: string;
   model?: string;
+  /** gpt-image background mode; "transparent" yields an alpha PNG (pet sprites). */
+  background?: "transparent" | "opaque" | "auto";
   signal?: AbortSignal;
 }
 
@@ -108,6 +113,7 @@ export async function editImage(opts: EditImageOptions): Promise<Uint8Array> {
     prompt: opts.prompt,
     images,
     size: opts.size ? toOpenAISize(opts.size) : undefined,
+    background: opts.background,
     signal: opts.signal,
   });
 }

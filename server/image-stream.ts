@@ -35,6 +35,15 @@ export interface StreamImageBase {
   size?: string;
   /** Number of progressive preview frames (0–3). Kept >=1 to keep the socket busy. */
   partialImages?: number;
+  /**
+   * gpt-image background handling. "transparent" makes gpt-image-1 emit a
+   * transparent-alpha PNG directly (no post-hoc chroma-key removal), which is
+   * what the Codex pet atlas needs for clean sprite/frame slicing. "opaque"
+   * forces a solid fill; "auto" lets the model decide. Omitted -> provider
+   * default (unchanged legacy behavior). Only meaningful for gpt-image models
+   * that support alpha output (PNG/WebP).
+   */
+  background?: "transparent" | "opaque" | "auto";
   /** Optional cancellation. */
   signal?: AbortSignal;
 }
@@ -161,6 +170,9 @@ export async function streamGenerate(opts: StreamGenerateOptions, onPartial?: Pa
     quality: "high",
   };
   if (opts.size) body["size"] = opts.size;
+  // Only attach when explicitly requested so unset requests keep the exact
+  // legacy body shape (provider default background).
+  if (opts.background) body["background"] = opts.background;
 
   const res = await fetch(endpoint(opts.baseURL, "/images/generations"), {
     method: "POST",
@@ -196,6 +208,9 @@ export async function streamEdit(opts: StreamEditOptions, onPartial?: PartialHan
   form.append("quality", "high");
   if (opts.size) form.append("size", opts.size);
   if (opts.inputFidelity) form.append("input_fidelity", opts.inputFidelity);
+  // Same opt-in rule as streamGenerate: skip the field entirely when unset so
+  // existing edit calls keep their current multipart shape.
+  if (opts.background) form.append("background", opts.background);
   for (const img of opts.images) {
     // Copy into a fresh ArrayBuffer so Blob gets exactly these bytes.
     form.append("image[]", new Blob([toArrayBuffer(img)], { type: "image/png" }), "ref.png");
