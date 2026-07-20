@@ -17,6 +17,7 @@ import { register as registerChat } from "./routes/chat.ts";
 import { register as registerPrompts } from "./routes/prompts.ts";
 import { register as registerImagegen } from "./routes/imagegen.ts";
 import { register as registerAnimation } from "./routes/animation.ts";
+import { register as registerPet } from "./routes/pet.ts";
 import { register as registerJina } from "./routes/jina.ts";
 
 const app = new Hono();
@@ -36,6 +37,7 @@ registerChat(app);
 registerPrompts(app);
 registerImagegen(app);
 registerAnimation(app);
+registerPet(app);
 registerJina(app);
 
 // Static assets last (SPA shell + templates/parts/animations trees).

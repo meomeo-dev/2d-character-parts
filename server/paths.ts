@@ -17,6 +17,8 @@ export const TEMPLATES_DIR = join(ROOT, "templates");
 export const PARTS_DIR = join(ROOT, "parts");
 /** Absolute path to animations/. */
 export const ANIMATIONS_DIR = join(ROOT, "animations");
+/** Absolute path to pets/ (generated Codex desktop-pet atlases). */
+export const PETS_DIR = join(ROOT, "pets");
 
 /** Join extra segments under config/. */
 export const configPath = (...segments: string[]): string => join(CONFIG_DIR, ...segments);
@@ -26,3 +28,5 @@ export const templatesPath = (...segments: string[]): string => join(TEMPLATES_D
 export const partsPath = (...segments: string[]): string => join(PARTS_DIR, ...segments);
 /** Join extra segments under animations/. */
 export const animationsPath = (...segments: string[]): string => join(ANIMATIONS_DIR, ...segments);
+/** Join extra segments under pets/. */
+export const petsPath = (...segments: string[]): string => join(PETS_DIR, ...segments);

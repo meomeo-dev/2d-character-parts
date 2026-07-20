@@ -119,12 +119,17 @@ export function registerStatic(app: Hono): void {
   app.use("/templates/*", requireAuth);
   app.use("/parts/*", requireAuth);
   app.use("/animations/*", requireAuth);
+  // Generated pet atlases (strips, frames, atlas.png, spritesheet.webp) are
+  // gated exactly like /animations/* — they carry real generated imagery and
+  // must never be readable without a session/bearer token.
+  app.use("/pets/*", requireAuth);
 
   // Static asset trees. `root: "./"` + the prefixed route means the request
   // path (e.g. /templates/panels/index.js) is joined onto the CWD as-is.
   app.get("/templates/*", serveStatic({ root: "./" }));
   app.get("/parts/*", serveStatic({ root: "./" }));
   app.get("/animations/*", serveStatic({ root: "./" }));
+  app.get("/pets/*", serveStatic({ root: "./" }));
 }
 
 /** Middleware: block static-tree access unless the session/bearer check passes. */

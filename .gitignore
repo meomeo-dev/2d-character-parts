@@ -54,5 +54,11 @@ animations/
 web/companion/
 *.gif
 
+# Generated pet atlas output (strips, frames, atlas.png, spritesheet.webp).
+# Glob the contents (not the dir) so the .gitkeep below stays trackable — git
+# won't descend into a bare `pets/`-ignored directory to honor the negation.
+pets/*
+!pets/.gitkeep
+
 # tracked-symlink guard
 /node_modules
