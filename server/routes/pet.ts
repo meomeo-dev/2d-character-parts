@@ -26,6 +26,10 @@ import { buildBasePrompt, buildRowPrompt } from "../pet/prompts.ts";
 import type { PetState } from "../pet/prompts.ts";
 import { composeAtlas, toWebp } from "../pet/compose-atlas.ts";
 import { validateAtlas } from "../pet/validate-atlas.ts";
+import type { ValidationResult } from "../pet/validate-atlas.ts";
+import { makeContactSheet } from "../pet/contact-sheet.ts";
+import { packagePet } from "../pet/package-pet.ts";
+import { visualQa } from "../llm.ts";
 import { inspectFrames } from "../pet/inspect-frames.ts";
 import { sliceStrip } from "../pet/slice-strip.ts";
 import { mirrorFrames } from "../pet/mirror.ts";
@@ -466,6 +470,129 @@ export function register(app: Hono): void {
       validation,
       atlas_url: updated["atlas_url"],
       webp_url: updated["webp_url"],
+      record: updated,
+    });
+  });
+
+  // Re-validate a composed run's atlas and render a labelled contact sheet for
+  // human QA. Deterministic only — the current LLM layer isn't multimodal, so no
+  // visual re-check is attempted here. The sheet lands at <runDir>/qa/contact-sheet.png.
+  app.post("/api/pet/qa", async (c) => {
+    let b: Record<string, unknown>;
+    try {
+      b = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const runId = optStr(b["runId"]);
+    if (!runId) return c.json({ error: "Provide 'runId'." }, 400);
+
+    const store = new PetStore();
+    const record = store.get(runId);
+    if (!record) return c.json({ error: `No pet run with id ${runId}` }, 404);
+
+    // The atlas is written by /compose; without it there's nothing to QA.
+    const atlasPath = typeof record["atlasPath"] === "string" ? record["atlasPath"] : "";
+    if (!atlasPath || !existsSync(atlasPath)) {
+      return c.json({ error: "No atlas for this run; call /api/pet/compose first." }, 400);
+    }
+
+    const runDir = typeof record["runDir"] === "string" ? record["runDir"] : petsPath(String(record["petId"] ?? "pet"));
+
+    const atlas = readFileSync(atlasPath);
+    // Deterministic checks always run and always ship in the response.
+    const validation = await validateAtlas(atlas);
+    const sheet = await makeContactSheet(atlas);
+
+    const qaDir = join(runDir, "qa");
+    mkdirSync(qaDir, { recursive: true });
+    const contactSheetPath = join(qaDir, "contact-sheet.png");
+    writeFileSync(contactSheetPath, sheet);
+
+    // Additive multimodal re-check: hand the contact sheet to the LLM for a
+    // visual verdict on identity/action/transparency. visualQa never throws —
+    // it degrades to visual_qa:"skipped" when no model is configured, the call
+    // fails, or the reply is unparseable — so QA stays green offline/in tests.
+    const rowSpecSummary = ROW_SPECS.map((s) => `row ${s.row}: ${s.state} (${s.usedCols} frames)`).join("; ");
+    const visual = await visualQa({ image: sheet, mediaType: "image/png", context: rowSpecSummary });
+
+    store.update(runId, {
+      qa: { validation, contactSheetPath, visualQa: visual, checkedAt: new Date().toISOString() },
+    });
+
+    const updated = recordUrls(store.get(runId) ?? {});
+    return c.json({
+      validation,
+      contact_sheet_url: petUrl(contactSheetPath),
+      visual_qa: visual,
+      record: updated,
+    });
+  });
+
+  // Package a composed, validated run into the local custom-pet layout
+  // (spritesheet.webp + pet.json). Requires the run's stored validation to be
+  // ok unless force:true is supplied. outDir defaults inside the run dir; an
+  // explicit outDir outside PETS_DIR is a cross-tree write — allowed, but its
+  // absolute path is surfaced so the caller sees exactly where files landed.
+  app.post("/api/pet/package", async (c) => {
+    let b: Record<string, unknown>;
+    try {
+      b = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const runId = optStr(b["runId"]);
+    if (!runId) return c.json({ error: "Provide 'runId'." }, 400);
+    const force = b["force"] === true;
+
+    const store = new PetStore();
+    const record = store.get(runId);
+    if (!record) return c.json({ error: `No pet run with id ${runId}` }, 404);
+
+    // Must be composed: the webp is written by /compose.
+    const webpPath = typeof record["webpPath"] === "string" ? record["webpPath"] : "";
+    if (!webpPath || !existsSync(webpPath)) {
+      return c.json({ error: "No spritesheet for this run; call /api/pet/compose first." }, 400);
+    }
+
+    // Quality gate: only ship an atlas that passed validation, unless forced.
+    const validation = record["validation"] as ValidationResult | undefined;
+    if (!force && !(validation && validation.ok)) {
+      return c.json(
+        { error: "Atlas has not passed validation; run /api/pet/compose then /api/pet/qa, or pass force:true to override." },
+        400,
+      );
+    }
+
+    const runDir = typeof record["runDir"] === "string" ? record["runDir"] : petsPath(String(record["petId"] ?? "pet"));
+    // Default inside the run dir; never auto-write the user's home directory.
+    const explicitOut = optStr(b["outDir"]);
+    const outDir = explicitOut ?? join(runDir, "package");
+    // Flag writes that escape the served pets/ tree (e.g. ~/.codex/pets/<name>).
+    const outsidePetsDir = relative(PETS_DIR, outDir).startsWith("..");
+
+    const petId = typeof record["petId"] === "string" ? record["petId"] : "pet";
+    const displayName = typeof record["displayName"] === "string" && record["displayName"]
+      ? record["displayName"]
+      : petId;
+    const description = typeof record["description"] === "string" ? record["description"] : "";
+
+    let result: Awaited<ReturnType<typeof packagePet>>;
+    try {
+      result = await packagePet({ petId, displayName, description, webp: readFileSync(webpPath), outDir });
+    } catch (e) {
+      return c.json({ error: `Packaging failed: ${(e as Error).message}` }, 500);
+    }
+
+    store.update(runId, { packagePath: outDir });
+
+    const updated = recordUrls(store.get(runId) ?? {});
+    return c.json({
+      manifest_path: result.manifestPath,
+      spritesheet_path: result.spritesheetPath,
+      // True when files were written outside pets/; the absolute paths above are
+      // the source of truth for where they actually landed.
+      outside_pets_dir: outsidePetsDir,
       record: updated,
     });
   });

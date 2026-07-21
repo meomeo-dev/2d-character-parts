@@ -11,7 +11,7 @@ import { test, before, after, mock } from "node:test";
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import sharp from "sharp";
@@ -69,6 +69,7 @@ function frameCountFromPrompt(prompt: string): number {
 before(async () => {
   mock_paths();
   await mock_imagegen();
+  mock_llm();
   ({ register } = await import(url("./routes/pet.ts")));
 });
 
@@ -102,6 +103,17 @@ async function mock_imagegen(): Promise<void> {
       // the prompt so the real slicer produces exactly usedCols frames.
       generateImage: async (opts: { prompt: string }) => buildStrip(frameCountFromPrompt(opts.prompt)),
       editImage: async (opts: { prompt: string }) => buildStrip(frameCountFromPrompt(opts.prompt)),
+    },
+  });
+}
+
+// Stub the multimodal visualQa so /api/pet/qa never touches a real provider or
+// network. Returns a deterministic "pass" verdict; the graceful-degradation
+// paths are covered by llm.test.ts against the real visualQa.
+function mock_llm(): void {
+  mock.module(url("llm.ts"), {
+    namedExports: {
+      visualQa: async () => ({ visual_qa: "pass", notes: "looks consistent", repair_rows: [] }),
     },
   });
 }
@@ -264,6 +276,92 @@ test("POST /api/pet/compose 400s when rows are missing", async () => {
   assert.equal(res.status, 400);
   const json = (await res.json()) as Record<string, unknown>;
   assert.match(String(json["error"]), /Missing or incomplete rows/);
+});
+
+/** Drive a run all the way through /compose and return its runId. */
+async function composeRun(a: Hono): Promise<string> {
+  const runId = await prepareRun(a);
+  await post(a, "/api/pet/generate-base", { runId });
+  for (const state of Object.keys(STATE_COLS)) {
+    if (state === "running-left") {
+      await post(a, "/api/pet/generate-row", { runId, state, mirrorFrom: "running-right" });
+    } else {
+      await post(a, "/api/pet/generate-row", { runId, state });
+    }
+  }
+  const res = await post(a, "/api/pet/compose", { runId });
+  assert.equal(res.status, 200, "compose should succeed before qa/package");
+  return runId;
+}
+
+test("POST /api/pet/qa validates the atlas and writes a contact sheet", async () => {
+  const a = app();
+  const runId = await composeRun(a);
+
+  const res = await post(a, "/api/pet/qa", { runId });
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as Record<string, unknown>;
+  const validation = json["validation"] as Record<string, unknown>;
+  assert.equal(validation["ok"], true, `validation errors: ${JSON.stringify(validation["errors"])}`);
+  assert.match(String(json["contact_sheet_url"]), /^\/pets\/.*\/qa\/contact-sheet\.png$/);
+  // The contact sheet landed on disk.
+  const rel = String(json["contact_sheet_url"]).replace("/pets/", "");
+  assert.ok(existsSync(join(PETS_DIR, rel)));
+  // The additive multimodal verdict is surfaced (mocked to "pass").
+  const visual = json["visual_qa"] as Record<string, unknown>;
+  assert.equal(visual["visual_qa"], "pass");
+  assert.ok(Array.isArray(visual["repair_rows"]));
+});
+
+test("POST /api/pet/qa 400s when the run has no atlas", async () => {
+  const a = app();
+  const runId = await prepareRun(a);
+  const res = await post(a, "/api/pet/qa", { runId });
+  assert.equal(res.status, 400);
+  const json = (await res.json()) as Record<string, unknown>;
+  assert.match(String(json["error"]), /compose first/);
+});
+
+test("POST /api/pet/package writes pet.json + spritesheet for a validated run", async () => {
+  const a = app();
+  const runId = await composeRun(a);
+
+  const res = await post(a, "/api/pet/package", { runId });
+  assert.equal(res.status, 200);
+  const json = (await res.json()) as Record<string, unknown>;
+
+  const manifestPath = String(json["manifest_path"]);
+  const spritesheetPath = String(json["spritesheet_path"]);
+  assert.ok(existsSync(manifestPath));
+  assert.ok(existsSync(spritesheetPath));
+  // Default outDir is inside the run dir (under pets/), not a cross-tree write.
+  assert.equal(json["outside_pets_dir"], false);
+
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+  assert.equal(manifest["id"], "tofu");
+  assert.equal(manifest["displayName"], "Tofu");
+  assert.equal(manifest["spritesheetPath"], "spritesheet.webp");
+});
+
+test("POST /api/pet/package 400s for an unvalidated run without force", async () => {
+  const a = app();
+  const runId = await composeRun(a);
+
+  // Overwrite the stored validation to a failing state so the gate trips.
+  const historyPath = join(PETS_DIR, "history.json");
+  const history = JSON.parse(readFileSync(historyPath, "utf-8")) as Array<Record<string, unknown>>;
+  const rec = history.find((r) => r["id"] === runId)!;
+  rec["validation"] = { ok: false, errors: ["forced-invalid"], warnings: [] };
+  writeFileSync(historyPath, JSON.stringify(history, null, 2) + "\n", "utf-8");
+
+  const blocked = await post(a, "/api/pet/package", { runId });
+  assert.equal(blocked.status, 400);
+  const json = (await blocked.json()) as Record<string, unknown>;
+  assert.match(String(json["error"]), /has not passed validation/);
+
+  // force:true bypasses the gate.
+  const forced = await post(a, "/api/pet/package", { runId, force: true });
+  assert.equal(forced.status, 200);
 });
 
 test("GET /api/pet/runs and /api/pet/runs/:id return persisted records", async () => {
