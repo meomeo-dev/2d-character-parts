@@ -45,6 +45,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: v
 body[data-tab='studio'] #studio-view { display: flex; }
 body[data-tab='rpg'] .tab-view[data-tab='rpg'] { display: block; }
 body[data-tab='animation'] .tab-view[data-tab='animation'] { display: block; }
+body[data-tab='pet'] .tab-view[data-tab='pet'] { display: block; }
 
 /* The companion (RPG) UI is a fixed-position overlay (#companion-shell);
    hide it entirely unless the RPG tab is active. */
@@ -241,6 +242,7 @@ button.sm { padding: 3px 8px; font-size: 11px; }
       <button class="tab-btn" data-tab="rpg" onclick="switchTab('rpg')">🎭 RPG Dialogue</button>
       <button class="tab-btn active" data-tab="studio" onclick="switchTab('studio')">🧩 Character Parts</button>
       <button class="tab-btn" data-tab="animation" onclick="switchTab('animation')">🎞 Sprite Animation</button>
+      <button class="tab-btn" data-tab="pet" onclick="switchTab('pet')">🐾 Pet Studio</button>
     </nav>
     <span class="badge" id="backend-badge">Canvas</span>
     <div class="actions">
@@ -271,6 +273,7 @@ button.sm { padding: 3px 8px; font-size: 11px; }
        Visibility is driven by body[data-tab]; see the .tab CSS block. -->
   <div id="chat-panel" class="feature-panel tab-view" data-tab="rpg"></div>
   <div id="animation-panel" class="feature-panel tab-view" data-tab="animation"></div>
+  <div id="pet-panel" class="feature-panel tab-view" data-tab="pet"></div>
 </div>
 
 <!-- Progress overlay -->
@@ -566,7 +569,7 @@ function switchTab(tab) {
 (function restoreTab() {
   let saved = null;
   try { saved = localStorage.getItem('studio_active_tab'); } catch (e) { /* ignore */ }
-  if (saved && ['rpg', 'studio', 'animation'].includes(saved)) switchTab(saved);
+  if (saved && ['rpg', 'studio', 'animation', 'pet'].includes(saved)) switchTab(saved);
 })();
 
 function clearLog() {

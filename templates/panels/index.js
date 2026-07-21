@@ -6,7 +6,8 @@
 //
 //   Track C: templates/panels/chat-panel.js   -> export mount() -> #chat-panel
 //   Track B: templates/panels/animation-panel.js -> export mount() -> #animation-panel
-const panels = ['./chat-panel.js', './animation-panel.js'];
+//   Pet:     templates/panels/pet-panel.js       -> export mount() -> #pet-panel
+const panels = ['./chat-panel.js', './animation-panel.js', './pet-panel.js'];
 for (const p of panels) {
   import(p).then(m => m.mount && m.mount()).catch(() => {}); // missing file: skip
 }
