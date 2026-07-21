@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText, stepCountIs, tool } from "ai";
-import type { ModelMessage, ToolSet } from "ai";
+import type { ModelMessage, ToolSet, UserContent } from "ai";
 import { z } from "zod";
 import { configPath } from "./paths.ts";
 import { getLlm, llmBaseURL } from "./providers.ts";
@@ -440,4 +440,113 @@ export async function compressMemory(
   const stableProfilePatch = summary["stableProfilePatch"] ?? {};
   delete summary["stableProfilePatch"];
   return { summary, stableProfilePatch };
+}
+
+// ── Multimodal visual QA (pet contact sheet) ──
+
+/** Inputs for {@link visualQa}. */
+export interface VisualQaOptions {
+  /** Raw image bytes to inspect (e.g. a rendered contact sheet). */
+  image: Buffer;
+  /** IANA media type of `image` (default "image/png"). */
+  mediaType?: string;
+  /** Domain context appended to the QA instructions (e.g. the row/state spec). */
+  context?: string;
+}
+
+/**
+ * Structured visual-QA verdict. `visual_qa` is "skipped" (never "fail") when the
+ * check could not run — no model configured, a provider/network error, or an
+ * unparseable reply — so callers can degrade gracefully instead of treating an
+ * infra problem as a quality failure.
+ */
+export interface VisualQaResult {
+  visual_qa: "pass" | "fail" | "skipped";
+  /** Short free-text summary of what the model saw. */
+  notes: string;
+  /** State/row names the model flagged as needing a re-render. */
+  repair_rows: string[];
+  /** Why the check was skipped (present only when visual_qa === "skipped"). */
+  reason?: string;
+}
+
+/** Coerce the model's JSON reply into a VisualQaResult, tolerating loose shapes. */
+function coerceVisualQa(raw: unknown): VisualQaResult {
+  const obj = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const verdict = obj["visual_qa"];
+  const visual_qa = verdict === "fail" ? "fail" : verdict === "pass" ? "pass" : "skipped";
+  const notes = typeof obj["notes"] === "string" ? obj["notes"] : "";
+  const repair_rows = Array.isArray(obj["repair_rows"])
+    ? obj["repair_rows"].filter((r): r is string => typeof r === "string")
+    : [];
+  const result: VisualQaResult = { visual_qa, notes, repair_rows };
+  // If the reply didn't carry a usable verdict, mark why it was treated as skipped.
+  if (visual_qa === "skipped") result.reason = "model reply had no pass/fail verdict";
+  return result;
+}
+
+/**
+ * Ask the LLM to visually inspect an image (a pet atlas contact sheet) and
+ * return a structured verdict on identity consistency, per-row action semantics,
+ * and fake-transparency / colour residue. Reuses the same provider path as
+ * chat()/compressMemory() (getLlm + createOpenAICompatible + provider.chatModel)
+ * and goes through the injectable _deps.generateText so tests can stub it.
+ *
+ * This is a best-effort, additive check: any failure to run (no api_key,
+ * provider error, non-vision model, unparseable output) resolves to
+ * visual_qa:"skipped" with a reason rather than throwing.
+ */
+export async function visualQa(opts: VisualQaOptions): Promise<VisualQaResult> {
+  const llm = getLlm();
+  // No key => no call. Degrade to "skipped" so the endpoint stays green offline.
+  if (!llm.api_key) {
+    return { visual_qa: "skipped", notes: "", repair_rows: [], reason: "no LLM api_key configured" };
+  }
+
+  const system = [
+    "你是 2D 桌宠精灵图(sprite atlas)的视觉质检员。",
+    "用户会给你一张“contact sheet”总览图:9 行,每行上方有深色标签条标注该行的状态名与应有帧数,",
+    "每格用绿框(应有内容的帧)或红框(应保持透明的空位)标出,格子背景是浅色棋盘(用来暴露透明区域)。",
+    "请检查:1) 各行同一角色的身份是否一致(造型/配色/比例);2) 每行动作是否符合其状态语义(如 running-left 是否朝左);",
+    "3) 是否存在假透明(棋盘上出现本应透明处的残留像素)或明显颜色残留/白底。",
+    '只输出一个 JSON 对象,不要 Markdown、不要解释,形如: {"visual_qa":"pass"|"fail","notes":"一句话总结","repair_rows":["需重做的状态名"]}。',
+    "identity/动作/透明基本无问题则 pass;有明显问题则 fail 并在 repair_rows 列出对应状态名。",
+  ].join("\n");
+
+  const instruction = opts.context
+    ? `请依据以下行规格检查这张 contact sheet:\n${opts.context}`
+    : "请检查这张 contact sheet。";
+
+  const provider = createOpenAICompatible({
+    name: "llm",
+    baseURL: llmBaseURL(llm.base_url),
+    apiKey: llm.api_key,
+  });
+  const model = provider.chatModel(llm.model);
+
+  // A single user turn carrying the instruction text + the image part. ai-sdk's
+  // ImagePart takes a Buffer directly (mediaType tells the provider the format).
+  const content: UserContent = [
+    { type: "text", text: instruction },
+    { type: "image", image: opts.image, mediaType: opts.mediaType ?? "image/png" },
+  ];
+
+  try {
+    const result = await _deps.generateText({
+      model,
+      system,
+      messages: [{ role: "user", content }],
+    });
+    const text = result.text ?? "";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripCodeFence(text));
+    } catch {
+      return { visual_qa: "skipped", notes: text.slice(0, 200), repair_rows: [], reason: "model reply was not valid JSON" };
+    }
+    return coerceVisualQa(parsed);
+  } catch (e) {
+    // Provider/network error or a model that can't accept image input.
+    return { visual_qa: "skipped", notes: "", repair_rows: [], reason: `visual QA call failed: ${(e as Error).message}` };
+  }
 }

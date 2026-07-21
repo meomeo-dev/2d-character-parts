@@ -10,6 +10,7 @@ import {
   buildChatMessages,
   chat,
   compressMemory,
+  visualQa,
 } from "./llm.ts";
 import type { generateText } from "ai";
 
@@ -159,4 +160,82 @@ test("compressMemory falls back to a well-formed summary on invalid JSON", async
   assert.equal((summary as { episodeTitle: string }).episodeTitle, "临时摘要");
   assert.equal((summary as { rawContent: string }).rawContent, "not json at all");
   assert.deepEqual(stableProfilePatch, {});
+});
+
+// ── visualQa (multimodal pet QA) ──
+// getLlm() resolves api_key from AI_GATEWAY_API_KEY at call time, so we toggle
+// the env var per-test. _deps.generateText stays stubbed => no real network.
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+test("visualQa skips (no throw) when no api_key is configured", async () => {
+  const prev = process.env["AI_GATEWAY_API_KEY"];
+  delete process.env["AI_GATEWAY_API_KEY"];
+  try {
+    const res = await visualQa({ image: PNG });
+    assert.equal(res.visual_qa, "skipped");
+    assert.match(String(res.reason), /api_key/);
+  } finally {
+    if (prev !== undefined) process.env["AI_GATEWAY_API_KEY"] = prev;
+  }
+});
+
+test("visualQa returns a structured pass verdict and sends an image part", async () => {
+  process.env["AI_GATEWAY_API_KEY"] = "test-key";
+  const { calls } = stubGenerateText({
+    text: JSON.stringify({ visual_qa: "pass", notes: "consistent", repair_rows: [] }),
+  });
+  try {
+    const res = await visualQa({ image: PNG, context: "row 0: idle (6 frames)" });
+    assert.equal(res.visual_qa, "pass");
+    assert.equal(res.notes, "consistent");
+    assert.deepEqual(res.repair_rows, []);
+
+    // The user turn carries a text part + an image part with the raw buffer.
+    const opts = calls[0] as { messages: Array<{ role: string; content: unknown }> };
+    const content = opts.messages[0]!.content as Array<Record<string, unknown>>;
+    assert.equal(content[0]!["type"], "text");
+    assert.equal(content[1]!["type"], "image");
+    assert.equal(content[1]!["mediaType"], "image/png");
+    assert.ok(Buffer.isBuffer(content[1]!["image"]));
+  } finally {
+    delete process.env["AI_GATEWAY_API_KEY"];
+  }
+});
+
+test("visualQa surfaces a fail verdict with repair_rows", async () => {
+  process.env["AI_GATEWAY_API_KEY"] = "test-key";
+  stubGenerateText({ text: '```json\n{"visual_qa":"fail","notes":"left run faces right","repair_rows":["running-left"]}\n```' });
+  try {
+    const res = await visualQa({ image: PNG });
+    assert.equal(res.visual_qa, "fail");
+    assert.deepEqual(res.repair_rows, ["running-left"]);
+  } finally {
+    delete process.env["AI_GATEWAY_API_KEY"];
+  }
+});
+
+test("visualQa skips on unparseable model output", async () => {
+  process.env["AI_GATEWAY_API_KEY"] = "test-key";
+  stubGenerateText({ text: "totally not json" });
+  try {
+    const res = await visualQa({ image: PNG });
+    assert.equal(res.visual_qa, "skipped");
+    assert.match(String(res.reason), /not valid JSON/);
+  } finally {
+    delete process.env["AI_GATEWAY_API_KEY"];
+  }
+});
+
+test("visualQa skips (no throw) when the provider call fails", async () => {
+  process.env["AI_GATEWAY_API_KEY"] = "test-key";
+  _deps.generateText = (async () => {
+    throw new Error("model does not support image input");
+  }) as unknown as GenText;
+  try {
+    const res = await visualQa({ image: PNG });
+    assert.equal(res.visual_qa, "skipped");
+    assert.match(String(res.reason), /image input/);
+  } finally {
+    delete process.env["AI_GATEWAY_API_KEY"];
+  }
 });
