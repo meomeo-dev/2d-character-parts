@@ -77,6 +77,111 @@ const longRunAgent = new Agent({
   keepAliveMaxTimeout: 600_000,
 });
 
+// ── Transient-failure retry ────────────────────────────────────────────────
+// Image renders reach a remote proxy over a long-lived connection, so an
+// occasional socket reset / connect timeout is expected — undici surfaces those
+// as `TypeError: fetch failed` with a `cause.code`. A single such blip should
+// not fail the whole request (the pet base render fires two calls back-to-back,
+// doubling the exposure). We retry only *transient* failures with exponential
+// backoff; a model rejection (HTTP 4xx, e.g. "transparent not supported") is
+// deterministic and must NOT be retried — retrying only wastes minutes.
+//
+// _retryConfig is mutable so tests can shrink the backoff to ~0ms; production
+// leaves the defaults. Backoff spans tens of seconds on purpose: transient
+// failures here include the proxy's "No available compatible accounts" (503)
+// when its gpt-image account pool is briefly exhausted — that recovers over
+// seconds, not milliseconds, so fast retries would just burn all attempts
+// before the pool frees up.
+export const _retryConfig = { maxAttempts: 5, baseDelayMs: 2000, maxDelayMs: 30_000 };
+
+// undici socket/DNS error codes that a retry can plausibly recover from.
+const RETRYABLE_CAUSE_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+]);
+
+/**
+ * Stream-level failure we consider worth retrying: the socket dropped
+ * mid-stream, or the stream ended without a `*.completed` event. Distinct from
+ * an HTTP error (handled via `toError`'s `retryable` flag).
+ */
+class RetryableStreamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RetryableStreamError";
+  }
+}
+
+/** Whether `err` is a transient failure that a retry might recover from. */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof RetryableStreamError) return true;
+  // An HTTP error carries an explicit retryable flag set by toError().
+  if (err && typeof err === "object" && "retryable" in err) {
+    return Boolean((err as { retryable?: unknown }).retryable);
+  }
+  // A user-initiated abort / timeout is never retried.
+  if (err instanceof Error && err.name === "AbortError") return false;
+  // undici network failures: `TypeError: fetch failed` with a cause code.
+  if (err instanceof TypeError) {
+    const cause = (err as { cause?: { code?: string } }).cause;
+    if (cause?.code && RETRYABLE_CAUSE_CODES.has(cause.code)) return true;
+    // Fall back to the message when the cause is not structured.
+    if (/fetch failed|terminated|socket/i.test(err.message)) return true;
+  }
+  return false;
+}
+
+/** Sleep for `ms`, rejecting early with an AbortError if `signal` aborts. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError());
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(t);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function abortError(): Error {
+  const e = new Error("The operation was aborted");
+  e.name = "AbortError";
+  return e;
+}
+
+/**
+ * Run `attempt` with exponential-backoff retries on transient failures.
+ * `attempt` must be self-contained (rebuild the request each call): a fetch
+ * body / FormData cannot be replayed once consumed.
+ */
+async function withRetry<T>(attempt: () => Promise<T>, label: string, signal?: AbortSignal): Promise<T> {
+  let lastErr: unknown;
+  for (let n = 1; n <= _retryConfig.maxAttempts; n++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastErr = err;
+      if (n >= _retryConfig.maxAttempts || !isRetryable(err)) throw err;
+      // Exponential backoff, capped, with ±20% jitter so concurrent renders
+      // (e.g. the pet base's two calls) don't retry in lockstep and re-collide.
+      const capped = Math.min(_retryConfig.baseDelayMs * 2 ** (n - 1), _retryConfig.maxDelayMs);
+      const wait = Math.round(capped * (0.8 + Math.random() * 0.4));
+      console.warn(`${label}: transient failure (attempt ${n}/${_retryConfig.maxAttempts}), retrying in ${wait}ms — ${(err as Error).message}`);
+      await delay(wait, signal); // throws AbortError if cancelled mid-backoff
+    }
+  }
+  throw lastErr;
+}
+
 /** Join base + path, tolerating a trailing slash on base. */
 function endpoint(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, "")}${path}`;
@@ -125,7 +230,14 @@ async function consumeImageStream(res: Response, onPartial?: PartialHandler): Pr
   };
 
   for (;;) {
-    const { done, value } = await reader.read();
+    let chunk: Awaited<ReturnType<typeof reader.read>>;
+    try {
+      chunk = await reader.read();
+    } catch (err) {
+      // Socket dropped mid-stream — recoverable by re-issuing the request.
+      throw new RetryableStreamError(`image stream interrupted: ${(err as Error).message}`);
+    }
+    const { done, value } = chunk;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let sep: number;
@@ -139,7 +251,8 @@ async function consumeImageStream(res: Response, onPartial?: PartialHandler): Pr
   if (buffer.trim()) flushBlock(buffer);
 
   if (!finalB64) {
-    throw new Error("image stream ended without a completed event");
+    // Stream closed cleanly but never delivered the image — treat as transient.
+    throw new RetryableStreamError("image stream ended without a completed event");
   }
   return new Uint8Array(Buffer.from(finalB64, "base64"));
 }
@@ -152,7 +265,11 @@ async function toError(res: Response, label: string): Promise<Error> {
   } catch {
     // ignore
   }
-  return new Error(`${label} failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
+  const err = new Error(`${label} failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`) as Error & { retryable: boolean };
+  // 429 (rate limit) and 5xx (proxy/upstream hiccup) are transient; other 4xx
+  // (e.g. 400 "transparent not supported") are deterministic model rejections.
+  err.retryable = res.status === 429 || res.status >= 500;
+  return err;
 }
 
 /**
@@ -174,20 +291,24 @@ export async function streamGenerate(opts: StreamGenerateOptions, onPartial?: Pa
   // legacy body shape (provider default background).
   if (opts.background) body["background"] = opts.background;
 
-  const res = await fetch(endpoint(opts.baseURL, "/images/generations"), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${opts.apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-    // @ts-expect-error dispatcher is an undici-specific fetch option, valid at runtime.
-    dispatcher: longRunAgent,
-  });
-  if (!res.ok) throw await toError(res, "image generation");
-  return consumeImageStream(res, onPartial);
+  // One self-contained attempt: fetch + consume. Retried on transient failure.
+  const attempt = async (): Promise<Uint8Array> => {
+    const res = await fetch(endpoint(opts.baseURL, "/images/generations"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opts.apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+      // @ts-expect-error dispatcher is an undici-specific fetch option, valid at runtime.
+      dispatcher: longRunAgent,
+    });
+    if (!res.ok) throw await toError(res, "image generation");
+    return consumeImageStream(res, onPartial);
+  };
+  return withRetry(attempt, "image generation", opts.signal);
 }
 
 /**
@@ -200,39 +321,48 @@ export async function streamEdit(opts: StreamEditOptions, onPartial?: PartialHan
   if (!opts.images || opts.images.length === 0) {
     throw new Error("streamEdit requires at least one reference image");
   }
-  const form = new FormData();
-  form.append("model", opts.model);
-  form.append("prompt", opts.prompt);
-  form.append("stream", "true");
-  form.append("partial_images", String(opts.partialImages ?? DEFAULT_PARTIAL_IMAGES));
-  form.append("quality", "high");
-  if (opts.size) form.append("size", opts.size);
-  if (opts.inputFidelity) form.append("input_fidelity", opts.inputFidelity);
-  // Same opt-in rule as streamGenerate: skip the field entirely when unset so
-  // existing edit calls keep their current multipart shape.
-  if (opts.background) form.append("background", opts.background);
-  for (const img of opts.images) {
-    // Copy into a fresh ArrayBuffer so Blob gets exactly these bytes.
-    form.append("image[]", new Blob([toArrayBuffer(img)], { type: "image/png" }), "ref.png");
-  }
-  if (opts.mask) {
-    form.append("mask", new Blob([toArrayBuffer(opts.mask)], { type: "image/png" }), "mask.png");
-  }
 
-  const res = await fetch(endpoint(opts.baseURL, "/images/edits"), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${opts.apiKey}`,
-      Accept: "text/event-stream",
-      // NOTE: no Content-Type — fetch sets the multipart boundary automatically.
-    },
-    body: form,
-    signal: opts.signal,
-    // @ts-expect-error dispatcher is an undici-specific fetch option, valid at runtime.
-    dispatcher: longRunAgent,
-  });
-  if (!res.ok) throw await toError(res, "image edit");
-  return consumeImageStream(res, onPartial);
+  // Rebuild the multipart body per attempt: a FormData/Blob body is single-use
+  // once fetch has streamed it, so it cannot be replayed on retry.
+  const buildForm = (): FormData => {
+    const form = new FormData();
+    form.append("model", opts.model);
+    form.append("prompt", opts.prompt);
+    form.append("stream", "true");
+    form.append("partial_images", String(opts.partialImages ?? DEFAULT_PARTIAL_IMAGES));
+    form.append("quality", "high");
+    if (opts.size) form.append("size", opts.size);
+    if (opts.inputFidelity) form.append("input_fidelity", opts.inputFidelity);
+    // Same opt-in rule as streamGenerate: skip the field entirely when unset so
+    // existing edit calls keep their current multipart shape.
+    if (opts.background) form.append("background", opts.background);
+    for (const img of opts.images) {
+      // Copy into a fresh ArrayBuffer so Blob gets exactly these bytes.
+      form.append("image[]", new Blob([toArrayBuffer(img)], { type: "image/png" }), "ref.png");
+    }
+    if (opts.mask) {
+      form.append("mask", new Blob([toArrayBuffer(opts.mask)], { type: "image/png" }), "mask.png");
+    }
+    return form;
+  };
+
+  const attempt = async (): Promise<Uint8Array> => {
+    const res = await fetch(endpoint(opts.baseURL, "/images/edits"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opts.apiKey}`,
+        Accept: "text/event-stream",
+        // NOTE: no Content-Type — fetch sets the multipart boundary automatically.
+      },
+      body: buildForm(),
+      signal: opts.signal,
+      // @ts-expect-error dispatcher is an undici-specific fetch option, valid at runtime.
+      dispatcher: longRunAgent,
+    });
+    if (!res.ok) throw await toError(res, "image edit");
+    return consumeImageStream(res, onPartial);
+  };
+  return withRetry(attempt, "image edit", opts.signal);
 }
 
 /** Copy a Uint8Array's exact bytes into a standalone ArrayBuffer for Blob. */
