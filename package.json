@@ -8,7 +8,7 @@
     "start": "tsx server/index.ts",
     "dev": "tsx watch server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test --experimental-test-module-mocks server/**/*.test.ts"
+    "test": "node --import tsx --test --experimental-test-module-mocks \"server/*.test.ts\" \"server/**/*.test.ts\""
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.12",

@@ -22,7 +22,11 @@ import * as jina from "./jina.ts";
 
 // Overridable AI SDK bindings, so tests can stub the network layer without
 // touching a real key or endpoint. Production code goes through this object.
-export const _deps = { generateText };
+// getLlm is injected here too so tests can control the resolved api_key
+// without depending on ambient env / config/runtime_settings.json (whose file
+// layer overrides env — see providers.ts "file > env > defaults"); deleting an
+// env var alone does not clear a key written to the settings file.
+export const _deps = { generateText, getLlm };
 
 // ── Motion / face effect normalisation (port of companion_effects.py) ──
 
@@ -497,7 +501,7 @@ function coerceVisualQa(raw: unknown): VisualQaResult {
  * visual_qa:"skipped" with a reason rather than throwing.
  */
 export async function visualQa(opts: VisualQaOptions): Promise<VisualQaResult> {
-  const llm = getLlm();
+  const llm = _deps.getLlm();
   // No key => no call. Degrade to "skipped" so the endpoint stays green offline.
   if (!llm.api_key) {
     return { visual_qa: "skipped", notes: "", repair_rows: [], reason: "no LLM api_key configured" };
