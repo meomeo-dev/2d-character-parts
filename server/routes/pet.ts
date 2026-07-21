@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Hono } from "hono";
-import { editImage, generateImage } from "../image-gen.ts";
+import { generateTransparent } from "../pet/transparent-gen.ts";
 import { PETS_DIR, partsPath, petsPath } from "../paths.ts";
 import { ROW_SPECS, usedColsFor } from "../pet/contract.ts";
 import { buildBasePrompt, buildRowPrompt } from "../pet/prompts.ts";
@@ -292,11 +292,12 @@ export function register(app: Hono): void {
     const storedRefs = Array.isArray(record["refParts"]) ? (record["refParts"] as unknown[]).filter((p): p is string => typeof p === "string") : [];
     const refs = reqRefs.length > 0 ? reqRefs : storedRefs;
 
-    let bytes: Uint8Array;
+    // Transparent alpha via white/black matting — the configured provider may
+    // not support native background:"transparent" (see pet/transparent-gen.ts).
+    let bytes: Buffer;
     try {
-      bytes = refs.length > 0
-        ? await editImage({ prompt: basePrompt, images: refs, background: "transparent" })
-        : await generateImage({ prompt: basePrompt, background: "transparent" });
+      const out = await generateTransparent({ prompt: basePrompt, refs });
+      bytes = out.transparent;
     } catch (e) {
       store.update(runId, { status: "base-failed", baseError: (e as Error).message });
       return c.json({ error: `Base generation failed: ${(e as Error).message}` }, 502);
@@ -365,15 +366,18 @@ export function register(app: Hono): void {
         return c.json({ error: "Base sprite not generated yet; call /api/pet/generate-base first." }, 400);
       }
       const prompt = typeof job["prompt"] === "string" ? job["prompt"] : "";
-      let stripBytes: Uint8Array;
+      let stripBytes: Buffer;
       try {
-        stripBytes = await editImage({ prompt, images: [basePath], background: "transparent" });
+        // Edit against the approved base so identity carries across rows;
+        // transparent alpha recovered via white/black matting.
+        const out = await generateTransparent({ prompt, refs: [basePath] });
+        stripBytes = out.transparent;
       } catch (e) {
         return c.json({ error: `Row generation failed for ${state}: ${(e as Error).message}` }, 502);
       }
       stripPath = join(runDir, "rows", `${state}-strip.png`);
       writeFileSync(stripPath, stripBytes);
-      frames = await sliceStrip(Buffer.from(stripBytes), expected);
+      frames = await sliceStrip(stripBytes, expected);
     }
 
     // Persist each sliced/mirrored frame as rows/<state>/<i>.png.

@@ -68,7 +68,7 @@ function frameCountFromPrompt(prompt: string): number {
 
 before(async () => {
   mock_paths();
-  await mock_imagegen();
+  await mock_transparent_gen();
   mock_llm();
   ({ register } = await import(url("./routes/pet.ts")));
 });
@@ -95,14 +95,19 @@ function mock_paths(): void {
   });
 }
 
-async function mock_imagegen(): Promise<void> {
-  mock.module(url("image-gen.ts"), {
+// pet.ts renders through generateTransparent (white/black matting under the
+// hood). These route tests care about the deterministic pipeline downstream of
+// the render, so we mock generateTransparent to hand back a real transparent
+// strip directly — the matting orchestration itself is covered by
+// pet/transparent-gen.test.ts. Base prompt => single centred sprite; a row
+// prompt => an N-slot strip sized from the embedded frame count.
+async function mock_transparent_gen(): Promise<void> {
+  mock.module(url("pet/transparent-gen.ts"), {
     namedExports: {
-      toOpenAISize: () => "auto",
-      // Base render: one centred sprite. Row render: an N-slot strip sized from
-      // the prompt so the real slicer produces exactly usedCols frames.
-      generateImage: async (opts: { prompt: string }) => buildStrip(frameCountFromPrompt(opts.prompt)),
-      editImage: async (opts: { prompt: string }) => buildStrip(frameCountFromPrompt(opts.prompt)),
+      generateTransparent: async (opts: { prompt: string }) => {
+        const strip = Buffer.from(await buildStrip(frameCountFromPrompt(opts.prompt)));
+        return { transparent: strip, white: strip, black: strip };
+      },
     },
   });
 }
