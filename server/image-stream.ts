@@ -188,6 +188,43 @@ function endpoint(baseURL: string, path: string): string {
 }
 
 /**
+ * Parse a NON-streaming images response and return the final image bytes.
+ *
+ * Some upstreams behind a proxy ignore `stream:true` and reply with a single
+ * JSON body ({ data: [{ b64_json | url }] }, Content-Type: application/json)
+ * instead of an SSE event stream. We detect that by Content-Type at the call
+ * site and route here so the exact same request body works against both
+ * streaming and non-streaming providers.
+ *
+ * `b64_json` is decoded directly; a `url` is downloaded (that GET can itself
+ * hit a transient failure, which the outer withRetry handles). A response with
+ * neither is a format error (not retryable) — retrying won't change the shape.
+ */
+async function parseNonStreamImage(res: Response, baseURL: string): Promise<Uint8Array> {
+  let body: { data?: Array<{ b64_json?: string; url?: string }> };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch (err) {
+    throw new Error(`image response was neither SSE nor valid JSON: ${(err as Error).message}`);
+  }
+  const first = body.data?.[0];
+  if (first?.b64_json) {
+    return new Uint8Array(Buffer.from(first.b64_json, "base64"));
+  }
+  if (first?.url) {
+    // Absolute URLs pass through; a relative one is resolved against the base.
+    const imageUrl = /^https?:\/\//i.test(first.url) ? first.url : endpoint(baseURL, first.url.startsWith("/") ? first.url : `/${first.url}`);
+    const dl = await fetch(imageUrl, {
+      // @ts-expect-error dispatcher is an undici-specific fetch option, valid at runtime.
+      dispatcher: longRunAgent,
+    });
+    if (!dl.ok) throw await toError(dl, "image download");
+    return new Uint8Array(await dl.arrayBuffer());
+  }
+  throw new Error("image response JSON had no b64_json or url in data[0]");
+}
+
+/**
  * Consume an SSE image stream and resolve with the final image bytes.
  *
  * Parses `data:` lines as JSON, forwards `*.partial_image` frames to onPartial,
@@ -306,7 +343,12 @@ export async function streamGenerate(opts: StreamGenerateOptions, onPartial?: Pa
       dispatcher: longRunAgent,
     });
     if (!res.ok) throw await toError(res, "image generation");
-    return consumeImageStream(res, onPartial);
+    // Auto-detect the provider's response shape: SSE stream vs a proxy that
+    // ignored stream:true and returned one-shot JSON. Request body is identical
+    // either way, so streaming providers are unaffected.
+    return (res.headers.get("content-type") ?? "").includes("event-stream")
+      ? consumeImageStream(res, onPartial)
+      : parseNonStreamImage(res, opts.baseURL);
   };
   return withRetry(attempt, "image generation", opts.signal);
 }
@@ -360,7 +402,10 @@ export async function streamEdit(opts: StreamEditOptions, onPartial?: PartialHan
       dispatcher: longRunAgent,
     });
     if (!res.ok) throw await toError(res, "image edit");
-    return consumeImageStream(res, onPartial);
+    // Same auto-detect as streamGenerate: SSE vs one-shot JSON from the proxy.
+    return (res.headers.get("content-type") ?? "").includes("event-stream")
+      ? consumeImageStream(res, onPartial)
+      : parseNonStreamImage(res, opts.baseURL);
   };
   return withRetry(attempt, "image edit", opts.signal);
 }

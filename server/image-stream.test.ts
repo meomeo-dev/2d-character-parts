@@ -40,6 +40,22 @@ function errorResponse(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: { message } }), { status });
 }
 
+/** A one-shot JSON response (proxy ignored stream:true), Content-Type json. */
+function jsonImageResponse(data: unknown): Response {
+  return new Response(JSON.stringify({ id: "img_x", created: 1, data }), {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+  });
+}
+
+/** A raw PNG-bytes response (what downloading a data[].url returns). */
+function pngBytesResponse(): Response {
+  return new Response(Buffer.from(PNG_B64, "base64"), {
+    status: 200,
+    headers: { "Content-Type": "image/png" },
+  });
+}
+
 /** A transient undici-style failure: TypeError("fetch failed") + cause.code. */
 function transientError(code = "ECONNRESET"): TypeError {
   const e = new TypeError("fetch failed");
@@ -125,5 +141,49 @@ test("streamEdit: rebuilds multipart body and retries transient failure", async 
   ]);
   const bytes = await streamEdit(EDIT);
   assert.equal(calls, 2);
+  assert.ok(bytes.length > 0);
+});
+
+// ── Non-streaming fallback (proxy ignores stream:true, returns JSON) ─────────
+
+test("streamGenerate: non-stream JSON with b64_json is decoded (no retry)", async () => {
+  scriptFetch([() => jsonImageResponse([{ b64_json: PNG_B64 }])]);
+  const bytes = await streamGenerate(BASE);
+  assert.equal(calls, 1, "inline b64 needs a single call");
+  assert.ok(bytes.length > 0, "decodes the base64 image");
+});
+
+test("streamGenerate: non-stream JSON with url downloads the image", async () => {
+  scriptFetch([
+    () => jsonImageResponse([{ url: "https://file.test/img.png" }]),
+    () => pngBytesResponse(), // the follow-up download
+  ]);
+  const bytes = await streamGenerate(BASE);
+  assert.equal(calls, 2, "one generate call + one download");
+  assert.ok(bytes.length > 0);
+});
+
+test("streamGenerate: non-stream JSON with empty data throws and is NOT retried", async () => {
+  scriptFetch([() => jsonImageResponse([{}])]);
+  await assert.rejects(() => streamGenerate(BASE), /no b64_json or url/);
+  assert.equal(calls, 1, "a shape error won't change on retry");
+});
+
+test("streamGenerate: url download retries a transient failure then succeeds", async () => {
+  scriptFetch([
+    () => jsonImageResponse([{ url: "https://file.test/img.png" }]),
+    () => { throw transientError("ECONNRESET"); }, // download blips once
+    () => jsonImageResponse([{ url: "https://file.test/img.png" }]), // retry: generate again
+    () => pngBytesResponse(), // download succeeds
+  ]);
+  const bytes = await streamGenerate(BASE);
+  assert.ok(bytes.length > 0);
+  assert.equal(calls, 4, "generate+failed-download, then generate+download");
+});
+
+test("streamEdit: non-stream JSON fallback also works", async () => {
+  scriptFetch([() => jsonImageResponse([{ b64_json: PNG_B64 }])]);
+  const bytes = await streamEdit(EDIT);
+  assert.equal(calls, 1);
   assert.ok(bytes.length > 0);
 });
